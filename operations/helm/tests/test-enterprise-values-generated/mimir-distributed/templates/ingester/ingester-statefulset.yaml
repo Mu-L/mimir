@@ -14,7 +14,7 @@ metadata:
     rollout-group: ingester
     zone: zone-a
   annotations:
-    rollout-max-unavailable: "25"
+    rollout-max-unavailable: "50"
   namespace: "citestns"
 spec:
   podManagementPolicy: Parallel
@@ -30,7 +30,9 @@ spec:
     type: OnDelete
   serviceName: test-enterprise-values-mimir-ingester-headless
   volumeClaimTemplates:
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: storage
       spec:
         accessModes:
@@ -54,25 +56,22 @@ spec:
     spec:
       serviceAccountName: test-enterprise-values-mimir
       securityContext:
-        {}
-      initContainers:
-        []
-      nodeSelector:
-        {}
-      affinity:
-        {}
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: mimir
-              app.kubernetes.io/instance: test-enterprise-values
-              app.kubernetes.io/component: ingester
-      tolerations:
-        []
-      terminationGracePeriodSeconds: 240
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: mimir
+            app.kubernetes.io/instance: test-enterprise-values
+            app.kubernetes.io/component: ingester
+      terminationGracePeriodSeconds: 1200
       volumes:
         - name: config
           secret:
@@ -126,9 +125,17 @@ spec:
               cpu: 100m
               memory: 512Mi
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
           env:
-          envFrom:
+            
+            - name: "GOMAXPROCS"
+              value: "4"
+            - name: "JAEGER_REPORTER_MAX_QUEUE_SIZE"
+              value: "1000"
 ---
 # Source: mimir-distributed/templates/ingester/ingester-statefulset.yaml
 apiVersion: apps/v1
@@ -145,7 +152,7 @@ metadata:
     rollout-group: ingester
     zone: zone-b
   annotations:
-    rollout-max-unavailable: "25"
+    rollout-max-unavailable: "50"
   namespace: "citestns"
 spec:
   podManagementPolicy: Parallel
@@ -161,7 +168,9 @@ spec:
     type: OnDelete
   serviceName: test-enterprise-values-mimir-ingester-headless
   volumeClaimTemplates:
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: storage
       spec:
         accessModes:
@@ -185,25 +194,22 @@ spec:
     spec:
       serviceAccountName: test-enterprise-values-mimir
       securityContext:
-        {}
-      initContainers:
-        []
-      nodeSelector:
-        {}
-      affinity:
-        {}
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: mimir
-              app.kubernetes.io/instance: test-enterprise-values
-              app.kubernetes.io/component: ingester
-      tolerations:
-        []
-      terminationGracePeriodSeconds: 240
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: mimir
+            app.kubernetes.io/instance: test-enterprise-values
+            app.kubernetes.io/component: ingester
+      terminationGracePeriodSeconds: 1200
       volumes:
         - name: config
           secret:
@@ -257,9 +263,17 @@ spec:
               cpu: 100m
               memory: 512Mi
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
           env:
-          envFrom:
+            
+            - name: "GOMAXPROCS"
+              value: "4"
+            - name: "JAEGER_REPORTER_MAX_QUEUE_SIZE"
+              value: "1000"
 ---
 # Source: mimir-distributed/templates/ingester/ingester-statefulset.yaml
 apiVersion: apps/v1
@@ -276,7 +290,7 @@ metadata:
     rollout-group: ingester
     zone: zone-c
   annotations:
-    rollout-max-unavailable: "25"
+    rollout-max-unavailable: "50"
   namespace: "citestns"
 spec:
   podManagementPolicy: Parallel
@@ -292,7 +306,9 @@ spec:
     type: OnDelete
   serviceName: test-enterprise-values-mimir-ingester-headless
   volumeClaimTemplates:
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: storage
       spec:
         accessModes:
@@ -316,25 +332,22 @@ spec:
     spec:
       serviceAccountName: test-enterprise-values-mimir
       securityContext:
-        {}
-      initContainers:
-        []
-      nodeSelector:
-        {}
-      affinity:
-        {}
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: mimir
-              app.kubernetes.io/instance: test-enterprise-values
-              app.kubernetes.io/component: ingester
-      tolerations:
-        []
-      terminationGracePeriodSeconds: 240
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: mimir
+            app.kubernetes.io/instance: test-enterprise-values
+            app.kubernetes.io/component: ingester
+      terminationGracePeriodSeconds: 1200
       volumes:
         - name: config
           secret:
@@ -388,6 +401,14 @@ spec:
               cpu: 100m
               memory: 512Mi
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
           env:
-          envFrom:
+            
+            - name: "GOMAXPROCS"
+              value: "4"
+            - name: "JAEGER_REPORTER_MAX_QUEUE_SIZE"
+              value: "1000"

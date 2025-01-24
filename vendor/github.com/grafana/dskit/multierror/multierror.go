@@ -1,3 +1,6 @@
+// Provenance-includes-location: https://github.com/thanos-io/thanos/blob/2027fb30/pkg/errutil/multierror.go
+// Provenance-includes-copyright: The Thanos Authors.
+
 package multierror
 
 import (
@@ -56,4 +59,8 @@ func (es nonNilMultiError) Error() string {
 	}
 
 	return buf.String()
+}
+
+func (es nonNilMultiError) Unwrap() []error {
+	return es
 }

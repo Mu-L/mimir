@@ -14,6 +14,7 @@
 package v2
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/go-openapi/analysis"
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/runtime/middleware"
 	"github.com/go-openapi/strfmt"
@@ -31,7 +33,6 @@ import (
 	"github.com/prometheus/common/version"
 	"github.com/rs/cors"
 
-	"github.com/prometheus/alertmanager/api/metrics"
 	open_api_models "github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/alertmanager/api/v2/restapi"
 	"github.com/prometheus/alertmanager/api/v2/restapi/operations"
@@ -40,9 +41,12 @@ import (
 	general_ops "github.com/prometheus/alertmanager/api/v2/restapi/operations/general"
 	receiver_ops "github.com/prometheus/alertmanager/api/v2/restapi/operations/receiver"
 	silence_ops "github.com/prometheus/alertmanager/api/v2/restapi/operations/silence"
+
+	"github.com/prometheus/alertmanager/api/metrics"
 	"github.com/prometheus/alertmanager/cluster"
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/dispatch"
+	"github.com/prometheus/alertmanager/matchers/compat"
 	"github.com/prometheus/alertmanager/pkg/labels"
 	"github.com/prometheus/alertmanager/provider"
 	"github.com/prometheus/alertmanager/silence"
@@ -50,7 +54,7 @@ import (
 	"github.com/prometheus/alertmanager/types"
 )
 
-// API represents an Alertmanager API v2
+// API represents an Alertmanager API v2.
 type API struct {
 	peer           cluster.ClusterPeer
 	silences       *silence.Silences
@@ -79,7 +83,7 @@ type (
 	setAlertStatusFn func(prometheus_model.LabelSet)
 )
 
-// NewAPI returns a new Alertmanager API v2
+// NewAPI returns a new Alertmanager API v2.
 func NewAPI(
 	alerts provider.Alerts,
 	gf groupsFn,
@@ -96,12 +100,12 @@ func NewAPI(
 		peer:           peer,
 		silences:       silences,
 		logger:         l,
-		m:              metrics.NewAlerts("v2", r),
+		m:              metrics.NewAlerts(r, l),
 		uptime:         time.Now(),
 	}
 
 	// Load embedded swagger file.
-	swaggerSpec, err := getSwaggerSpec()
+	swaggerSpec, swaggerSpecAnalysis, err := getSwaggerSpec()
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +117,9 @@ func NewAPI(
 	// the API itself via RoutesHandler. See:
 	// https://github.com/go-swagger/go-swagger/issues/1779
 	openAPI.Middleware = func(b middleware.Builder) http.Handler {
-		return middleware.Spec("", swaggerSpec.Raw(), openAPI.Context().RoutesHandler(b))
+		// Manually create the context so that we can use the singleton swaggerSpecAnalysis.
+		swaggerContext := middleware.NewRoutableContextWithAnalyzedSpec(swaggerSpec, swaggerSpecAnalysis, openAPI, nil)
+		return middleware.Spec("", swaggerSpec.Raw(), swaggerContext.RoutesHandler(b))
 	}
 
 	openAPI.AlertGetAlertsHandler = alert_ops.GetAlertsHandlerFunc(api.getAlertsHandler)
@@ -127,9 +133,22 @@ func NewAPI(
 	openAPI.SilencePostSilencesHandler = silence_ops.PostSilencesHandlerFunc(api.postSilencesHandler)
 
 	handleCORS := cors.Default().Handler
-	api.Handler = handleCORS(openAPI.Serve(nil))
+	api.Handler = handleCORS(setResponseHeaders(openAPI.Serve(nil)))
 
 	return &api, nil
+}
+
+var responseHeaders = map[string]string{
+	"Cache-Control": "no-store",
+}
+
+func setResponseHeaders(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for h, v := range responseHeaders {
+			w.Header().Set(h, v)
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 func (api *API) requestLogger(req *http.Request) log.Logger {
@@ -208,7 +227,8 @@ func (api *API) getReceiversHandler(params receiver_ops.GetReceiversParams) midd
 
 	receivers := make([]*open_api_models.Receiver, 0, len(api.alertmanagerConfig.Receivers))
 	for _, r := range api.alertmanagerConfig.Receivers {
-		receivers = append(receivers, &open_api_models.Receiver{Name: &r.Name})
+		name := r.Name
+		receivers = append(receivers, &open_api_models.Receiver{Name: &name})
 	}
 
 	return receiver_ops.NewGetReceiversOK().WithPayload(receivers)
@@ -489,17 +509,10 @@ func matchFilterLabels(matchers []*labels.Matcher, sms map[string]string) bool {
 func (api *API) getSilencesHandler(params silence_ops.GetSilencesParams) middleware.Responder {
 	logger := api.requestLogger(params.HTTPRequest)
 
-	matchers := []*labels.Matcher{}
-	if params.Filter != nil {
-		for _, matcherString := range params.Filter {
-			matcher, err := labels.ParseMatcher(matcherString)
-			if err != nil {
-				level.Debug(logger).Log("msg", "Failed to parse matchers", "err", err)
-				return alert_ops.NewGetAlertsBadRequest().WithPayload(err.Error())
-			}
-
-			matchers = append(matchers, matcher)
-		}
+	matchers, err := parseFilter(params.Filter)
+	if err != nil {
+		level.Debug(logger).Log("msg", "Failed to parse matchers", "err", err)
+		return silence_ops.NewGetSilencesBadRequest().WithPayload(err.Error())
 	}
 
 	psils, _, err := api.silences.Query()
@@ -534,9 +547,9 @@ var silenceStateOrder = map[types.SilenceState]int{
 
 // SortSilences sorts first according to the state "active, pending, expired"
 // then by end time or start time depending on the state.
-// active silences should show the next to expire first
+// Active silences should show the next to expire first
 // pending silences are ordered based on which one starts next
-// expired are ordered based on which one expired most recently
+// expired are ordered based on which one expired most recently.
 func SortSilences(sils open_api_models.GettableSilences) {
 	sort.Slice(sils, func(i, j int) bool {
 		state1 := types.SilenceState(*sils[i].Status.State)
@@ -618,6 +631,9 @@ func (api *API) deleteSilenceHandler(params silence_ops.DeleteSilenceParams) mid
 	sid := params.SilenceID.String()
 	if err := api.silences.Expire(sid); err != nil {
 		level.Error(logger).Log("msg", "Failed to expire silence", "err", err)
+		if errors.Is(err, silence.ErrNotFound) {
+			return silence_ops.NewDeleteSilenceNotFound()
+		}
 		return silence_ops.NewDeleteSilenceInternalServerError().WithPayload(err.Error())
 	}
 	return silence_ops.NewDeleteSilenceOK()
@@ -646,24 +662,23 @@ func (api *API) postSilencesHandler(params silence_ops.PostSilencesParams) middl
 		return silence_ops.NewPostSilencesBadRequest().WithPayload(msg)
 	}
 
-	sid, err := api.silences.Set(sil)
-	if err != nil {
+	if err = api.silences.Set(sil); err != nil {
 		level.Error(logger).Log("msg", "Failed to create silence", "err", err)
-		if err == silence.ErrNotFound {
+		if errors.Is(err, silence.ErrNotFound) {
 			return silence_ops.NewPostSilencesNotFound().WithPayload(err.Error())
 		}
 		return silence_ops.NewPostSilencesBadRequest().WithPayload(err.Error())
 	}
 
 	return silence_ops.NewPostSilencesOK().WithPayload(&silence_ops.PostSilencesOKBody{
-		SilenceID: sid,
+		SilenceID: sil.Id,
 	})
 }
 
 func parseFilter(filter []string) ([]*labels.Matcher, error) {
 	matchers := make([]*labels.Matcher, 0, len(filter))
 	for _, matcherString := range filter {
-		matcher, err := labels.ParseMatcher(matcherString)
+		matcher, err := compat.Matcher(matcherString, "api")
 		if err != nil {
 			return nil, err
 		}
@@ -674,29 +689,31 @@ func parseFilter(filter []string) ([]*labels.Matcher, error) {
 }
 
 var (
-	swaggerSpecCacheMx sync.Mutex
-	swaggerSpecCache   *loads.Document
+	swaggerSpecCacheMx       sync.Mutex
+	swaggerSpecCache         *loads.Document
+	swaggerSpecAnalysisCache *analysis.Spec
 )
 
 // getSwaggerSpec loads and caches the swagger spec. If a cached version already exists,
 // it returns the cached one. The reason why we cache it is because some downstream projects
 // (e.g. Grafana Mimir) creates many Alertmanager instances in the same process, so they would
 // incur in a significant memory penalty if we would reload the swagger spec each time.
-func getSwaggerSpec() (*loads.Document, error) {
+func getSwaggerSpec() (*loads.Document, *analysis.Spec, error) {
 	swaggerSpecCacheMx.Lock()
 	defer swaggerSpecCacheMx.Unlock()
 
 	// Check if a cached version exists.
 	if swaggerSpecCache != nil {
-		return swaggerSpecCache, nil
+		return swaggerSpecCache, swaggerSpecAnalysisCache, nil
 	}
 
 	// Load embedded swagger file.
 	swaggerSpec, err := loads.Analyzed(restapi.SwaggerJSON, "")
 	if err != nil {
-		return nil, fmt.Errorf("failed to load embedded swagger file: %w", err)
+		return nil, nil, fmt.Errorf("failed to load embedded swagger file: %w", err)
 	}
 
 	swaggerSpecCache = swaggerSpec
-	return swaggerSpec, nil
+	swaggerSpecAnalysisCache = analysis.New(swaggerSpec.Spec())
+	return swaggerSpec, swaggerSpecAnalysisCache, nil
 }

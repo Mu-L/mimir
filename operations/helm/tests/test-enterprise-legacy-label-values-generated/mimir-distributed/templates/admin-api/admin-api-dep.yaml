@@ -18,6 +18,9 @@ spec:
       app: enterprise-metrics-admin-api
       release: test-enterprise-legacy-label-values
   strategy:
+    rollingUpdate:
+      maxSurge: 15%
+      maxUnavailable: 0
     type: RollingUpdate
   template:
     metadata:
@@ -32,8 +35,12 @@ spec:
     spec:
       serviceAccountName: test-enterprise-legacy-label-values-enterprise-metrics
       securityContext:
-        {}
-      initContainers:
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: admin-api
           imagePullPolicy: IfNotPresent
@@ -50,7 +57,6 @@ spec:
               mountPath: /license
             - name: storage
               mountPath: "/data"
-              subPath: 
             - name: active-queries
               mountPath: /active-query-tracker
           ports:
@@ -75,23 +81,19 @@ spec:
               cpu: 10m
               memory: 32Mi
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
-          env:
-          envFrom:
-      nodeSelector:
-        {}
-      affinity:
-        {}
       topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app: enterprise-metrics-admin-api
-              release: test-enterprise-legacy-label-values
-      tolerations:
-        []
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: enterprise-metrics-admin-api
+            release: test-enterprise-legacy-label-values
       terminationGracePeriodSeconds: 60
       volumes:
         - name: config

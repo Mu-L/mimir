@@ -4,10 +4,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: test-oss-values-minio
-  namespace: "citestns"
   labels:
     app: minio
-    chart: minio-4.0.12
+    chart: minio-5.4.0
     release: test-oss-values
     heritage: Helm
 spec:
@@ -28,19 +27,20 @@ spec:
         app: minio
         release: test-oss-values
       annotations:
-        checksum/secrets: 996f2e7e331ce5ad39c338b8dfd60ff53fbd342cbec290d5ac17d36c399c086e
-        checksum/config: f007f891fa46cb9e7d1b8e7e21c739c845178fc4f0e30cc7db88c0b6d58e0bfa
+        checksum/secrets: 3385e2fb878d21e00a6b7add9728bed0bbd60b70fc46138798a71fd3452fdb8c
+        checksum/config: 024383a8c90ee3dd743af3559d65f3726218e52af5999bf8d953cb16c6dec218
     spec:
       securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
+        
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
-
+        runAsGroup: 1000
+        runAsUser: 1000
+      
       serviceAccountName: minio-sa
       containers:
         - name: minio
-          image: "quay.io/minio/minio:RELEASE.2022-08-13T21-54-44Z"
+          image: "quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z"
           imagePullPolicy: IfNotPresent
           command:
             - "/bin/sh"
@@ -73,7 +73,9 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi      
+              memory: 128Mi
+          securityContext: 
+            readOnlyRootFilesystem: false      
       volumes:
         - name: export
           persistentVolumeClaim:

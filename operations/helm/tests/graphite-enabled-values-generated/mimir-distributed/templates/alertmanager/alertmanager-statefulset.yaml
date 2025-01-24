@@ -24,7 +24,9 @@ spec:
     type: RollingUpdate
   serviceName: graphite-enabled-values-mimir-alertmanager
   volumeClaimTemplates:
-    - metadata:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
         name: storage
       spec:
         accessModes:
@@ -45,25 +47,22 @@ spec:
     spec:
       serviceAccountName: graphite-enabled-values-mimir
       securityContext:
-        {}
-      initContainers:
-        []
-      nodeSelector:
-        {}
-      affinity:
-        {}
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: mimir
-              app.kubernetes.io/instance: graphite-enabled-values
-              app.kubernetes.io/component: alertmanager
-      tolerations:
-        []
-      terminationGracePeriodSeconds: 60
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: mimir
+            app.kubernetes.io/instance: graphite-enabled-values
+            app.kubernetes.io/component: alertmanager
+      terminationGracePeriodSeconds: 900
       volumes:
         - name: config
           configMap:
@@ -81,6 +80,9 @@ spec:
           emptyDir: {}
         - name: active-queries
           emptyDir: {}
+        - name: alertmanager-fallback-config
+          configMap:
+            name: graphite-enabled-values-mimir-alertmanager-fallback-config
       containers:
         - name: alertmanager
           imagePullPolicy: IfNotPresent
@@ -88,6 +90,10 @@ spec:
             - "-target=alertmanager"
             - "-config.expand-env=true"
             - "-config.file=/etc/mimir/mimir.yaml"
+            # Prometheus HTTP client used to send alerts has a hard-coded idle
+            # timeout of 5 minutes, therefore the server timeout for Alertmanager
+            # needs to be higher to avoid connections being closed abruptly.
+            - "-server.http-idle-timeout=6m"
           volumeMounts:
             - name: config
               mountPath: /etc/mimir
@@ -97,6 +103,8 @@ spec:
               mountPath: /var/mimir
             - name: storage
               mountPath: "/data"
+            - name: alertmanager-fallback-config
+              mountPath: /configs/
             - name: tmp
               mountPath: /tmp
             - name: active-queries
@@ -123,6 +131,8 @@ spec:
               cpu: 10m
               memory: 32Mi
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
-          env:
-          envFrom:
