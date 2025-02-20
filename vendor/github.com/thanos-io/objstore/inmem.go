@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"io/ioutil"
 	"sort"
 	"strings"
 	"sync"
@@ -35,10 +34,20 @@ func NewInMemBucket() *InMemBucket {
 	}
 }
 
-// Objects returns internally stored objects.
+func (b *InMemBucket) Provider() ObjProvider { return MEMORY }
+
+// Objects returns a copy of the internally stored objects.
 // NOTE: For assert purposes.
 func (b *InMemBucket) Objects() map[string][]byte {
-	return b.objects
+	b.mtx.RLock()
+	defer b.mtx.RUnlock()
+
+	objs := make(map[string][]byte)
+	for k, v := range b.objects {
+		objs[k] = v
+	}
+
+	return objs
 }
 
 // Iter calls f for each entry in the given directory. The argument to f is the full
@@ -99,6 +108,20 @@ func (b *InMemBucket) Iter(_ context.Context, dir string, f func(string) error, 
 	return nil
 }
 
+func (i *InMemBucket) SupportedIterOptions() []IterOptionType {
+	return []IterOptionType{Recursive}
+}
+
+func (b *InMemBucket) IterWithAttributes(ctx context.Context, dir string, f func(attrs IterObjectAttributes) error, options ...IterOption) error {
+	if err := ValidateIterOptions(b.SupportedIterOptions(), options...); err != nil {
+		return err
+	}
+
+	return b.Iter(ctx, dir, func(name string) error {
+		return f(IterObjectAttributes{Name: name})
+	}, options...)
+}
+
 // Get returns a reader for the given object name.
 func (b *InMemBucket) Get(_ context.Context, name string) (io.ReadCloser, error) {
 	if name == "" {
@@ -112,7 +135,12 @@ func (b *InMemBucket) Get(_ context.Context, name string) (io.ReadCloser, error)
 		return nil, errNotFound
 	}
 
-	return ioutil.NopCloser(bytes.NewReader(file)), nil
+	return ObjectSizerReadCloser{
+		ReadCloser: io.NopCloser(bytes.NewReader(file)),
+		Size: func() (int64, error) {
+			return int64(len(file)), nil
+		},
+	}, nil
 }
 
 // GetRange returns a new range reader for the given object name and range.
@@ -129,15 +157,27 @@ func (b *InMemBucket) GetRange(_ context.Context, name string, off, length int64
 	}
 
 	if int64(len(file)) < off {
-		return ioutil.NopCloser(bytes.NewReader(nil)), nil
+		return ObjectSizerReadCloser{
+			ReadCloser: io.NopCloser(bytes.NewReader(nil)),
+			Size:       func() (int64, error) { return 0, nil },
+		}, nil
 	}
 
 	if length == -1 {
-		return ioutil.NopCloser(bytes.NewReader(file[off:])), nil
+		return ObjectSizerReadCloser{
+			ReadCloser: io.NopCloser(bytes.NewReader(file[off:])),
+			Size: func() (int64, error) {
+				return int64(len(file[off:])), nil
+			},
+		}, nil
 	}
 
 	if length <= 0 {
-		return ioutil.NopCloser(bytes.NewReader(nil)), errors.New("length cannot be smaller or equal 0")
+		// wrap with ObjectSizerReadCloser to return 0 size.
+		return ObjectSizerReadCloser{
+			ReadCloser: io.NopCloser(bytes.NewReader(nil)),
+			Size:       func() (int64, error) { return 0, nil },
+		}, errors.New("length cannot be smaller or equal 0")
 	}
 
 	if int64(len(file)) <= off+length {
@@ -145,7 +185,12 @@ func (b *InMemBucket) GetRange(_ context.Context, name string, off, length int64
 		length = int64(len(file)) - off
 	}
 
-	return ioutil.NopCloser(bytes.NewReader(file[off : off+length])), nil
+	return ObjectSizerReadCloser{
+		ReadCloser: io.NopCloser(bytes.NewReader(file[off : off+length])),
+		Size: func() (int64, error) {
+			return length, nil
+		},
+	}, nil
 }
 
 // Exists checks if the given directory exists in memory.
@@ -171,7 +216,7 @@ func (b *InMemBucket) Attributes(_ context.Context, name string) (ObjectAttribut
 func (b *InMemBucket) Upload(_ context.Context, name string, r io.Reader) error {
 	b.mtx.Lock()
 	defer b.mtx.Unlock()
-	body, err := ioutil.ReadAll(r)
+	body, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}
@@ -198,6 +243,11 @@ func (b *InMemBucket) Delete(_ context.Context, name string) error {
 // IsObjNotFoundErr returns true if error means that object is not found. Relevant to Get operations.
 func (b *InMemBucket) IsObjNotFoundErr(err error) bool {
 	return errors.Is(err, errNotFound)
+}
+
+// IsAccessDeniedErr returns true if access to object is denied.
+func (b *InMemBucket) IsAccessDeniedErr(err error) bool {
+	return false
 }
 
 func (b *InMemBucket) Close() error { return nil }

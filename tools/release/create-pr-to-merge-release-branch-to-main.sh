@@ -63,8 +63,7 @@ while true; do
   echo "1. Ensure VERSION is not changed (keep the same version as in main)."
   echo "2. Fix any conflict."
   echo "3. Clean up CHANGELOG.md: incoming entries from release branch should be under proper release version. There may be duplicate entries already."
-  echo ""
-  echo "Run 'git commit' once done."
+  echo "4. Run 'git commit'."
 
   read -p "Press any key to continue... " -n 1 -r
   echo ""
@@ -77,4 +76,4 @@ done
 
 # Open the PR.
 git push -u origin "${BRANCH_NAME}"
-gh pr create --title "Merge ${LAST_RELEASE_BRANCH} to main" --body "In this PR I'm merging the ${LAST_RELEASE_BRANCH} branch to main branch. Please remember to merge it using **merge commit**."
+gh pr create --title "Merge ${LAST_RELEASE_BRANCH} to main" --body "In this PR I'm merging the ${LAST_RELEASE_BRANCH} branch to main branch. Please merge this PR using a **merge commit** or by using \`tools/release/merge-approved-pr-branch-to-main.sh\` script."

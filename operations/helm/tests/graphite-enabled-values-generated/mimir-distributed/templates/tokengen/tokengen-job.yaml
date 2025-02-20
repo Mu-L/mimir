@@ -24,11 +24,17 @@ spec:
         app.kubernetes.io/instance: graphite-enabled-values
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/component: tokengen
+      annotations:
       namespace: "citestns"
     spec:
       serviceAccountName: graphite-enabled-values-mimir
       securityContext:
-        null
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         []
       containers:
@@ -45,9 +51,11 @@ spec:
               mountPath: /license
             - name: active-queries
               mountPath: /active-query-tracker
-          env:
-          envFrom:
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
       restartPolicy: OnFailure
       volumes:

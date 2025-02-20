@@ -1,0 +1,34 @@
+name: publish-technical-documentation-release-mimir
+
+on:
+  push:
+    branches:
+      - "release-*"
+    tags:
+      - "mimir-[0-9]+.[0-9]+.[0-9]+"
+    paths:
+      - "docs/sources/mimir/**"
+  workflow_dispatch:
+jobs:
+  test:
+    uses: ./.github/workflows/test-docs.yml
+  sync:
+    if: github.repository == 'grafana/mimir'
+    needs: test
+    # The following permissions are required to to assume roles from GitHub's OIDC which is used to fetch secrets from Vault.
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full fetch depth is required to fetch tags. The publishing workflow uses tags to prevent publishing a release branch before it has been formally released, as determined by the presence of a matching tag for the release branch.
+          fetch-depth: 0
+      - uses: grafana/writers-toolkit/publish-technical-documentation-release@publish-technical-documentation-release/v1
+        with:
+          release_tag_regexp: "^mimir-(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+          release_branch_regexp: "^release-(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+          release_branch_with_patch_regexp: "^release-(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+          source_directory: docs/sources/mimir
+          website_directory: content/docs/mimir

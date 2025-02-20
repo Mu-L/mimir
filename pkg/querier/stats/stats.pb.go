@@ -8,7 +8,7 @@ import (
 	_ "github.com/gogo/protobuf/gogoproto"
 	proto "github.com/gogo/protobuf/proto"
 	github_com_gogo_protobuf_types "github.com/gogo/protobuf/types"
-	_ "github.com/golang/protobuf/ptypes/duration"
+	_ "google.golang.org/protobuf/types/known/durationpb"
 	io "io"
 	math "math"
 	math_bits "math/bits"
@@ -34,14 +34,26 @@ type Stats struct {
 	WallTime time.Duration `protobuf:"bytes,1,opt,name=wall_time,json=wallTime,proto3,stdduration" json:"wall_time"`
 	// The number of series fetched for the query
 	FetchedSeriesCount uint64 `protobuf:"varint,2,opt,name=fetched_series_count,json=fetchedSeriesCount,proto3" json:"fetched_series_count,omitempty"`
-	// The number of bytes of the chunks fetched for the query
+	// The number of bytes of the chunks fetched for the query, after any deduplication
 	FetchedChunkBytes uint64 `protobuf:"varint,3,opt,name=fetched_chunk_bytes,json=fetchedChunkBytes,proto3" json:"fetched_chunk_bytes,omitempty"`
-	// The number of chunks fetched for the query
+	// The number of chunks fetched for the query, after any deduplication
 	FetchedChunksCount uint64 `protobuf:"varint,4,opt,name=fetched_chunks_count,json=fetchedChunksCount,proto3" json:"fetched_chunks_count,omitempty"`
 	// The number of sharded queries executed. 0 if sharding is disabled or the query can't be sharded.
 	ShardedQueries uint32 `protobuf:"varint,5,opt,name=sharded_queries,json=shardedQueries,proto3" json:"sharded_queries,omitempty"`
 	// The number of split partial queries executed. 0 if splitting is disabled or the query can't be split.
 	SplitQueries uint32 `protobuf:"varint,6,opt,name=split_queries,json=splitQueries,proto3" json:"split_queries,omitempty"`
+	// The number of index bytes fetched on the store-gateway for the query
+	FetchedIndexBytes uint64 `protobuf:"varint,7,opt,name=fetched_index_bytes,json=fetchedIndexBytes,proto3" json:"fetched_index_bytes,omitempty"`
+	// The estimated number of series to be fetched for the query
+	EstimatedSeriesCount uint64 `protobuf:"varint,8,opt,name=estimated_series_count,json=estimatedSeriesCount,proto3" json:"estimated_series_count,omitempty"`
+	// The sum of durations that the query spent in the queue, before it was handled by querier.
+	QueueTime time.Duration `protobuf:"bytes,9,opt,name=queue_time,json=queueTime,proto3,stdduration" json:"queue_time"`
+	// The time spent at the frontend encoding the query's final results. Does not include time spent serializing results at the querier.
+	EncodeTime time.Duration `protobuf:"bytes,10,opt,name=encode_time,json=encodeTime,proto3,stdduration" json:"encode_time"`
+	// TotalSamples represents the total number of samples scanned while evaluating a query.
+	SamplesProcessed uint64 `protobuf:"varint,11,opt,name=samples_processed,json=samplesProcessed,proto3" json:"samples_processed,omitempty"`
+	// The number of subqueries that were spun off as actual range queries in order to execute the full query
+	SpunOffSubqueries uint32 `protobuf:"varint,12,opt,name=spun_off_subqueries,json=spunOffSubqueries,proto3" json:"spun_off_subqueries,omitempty"`
 }
 
 func (m *Stats) Reset()      { *m = Stats{} }
@@ -118,6 +130,48 @@ func (m *Stats) GetSplitQueries() uint32 {
 	return 0
 }
 
+func (m *Stats) GetFetchedIndexBytes() uint64 {
+	if m != nil {
+		return m.FetchedIndexBytes
+	}
+	return 0
+}
+
+func (m *Stats) GetEstimatedSeriesCount() uint64 {
+	if m != nil {
+		return m.EstimatedSeriesCount
+	}
+	return 0
+}
+
+func (m *Stats) GetQueueTime() time.Duration {
+	if m != nil {
+		return m.QueueTime
+	}
+	return 0
+}
+
+func (m *Stats) GetEncodeTime() time.Duration {
+	if m != nil {
+		return m.EncodeTime
+	}
+	return 0
+}
+
+func (m *Stats) GetSamplesProcessed() uint64 {
+	if m != nil {
+		return m.SamplesProcessed
+	}
+	return 0
+}
+
+func (m *Stats) GetSpunOffSubqueries() uint32 {
+	if m != nil {
+		return m.SpunOffSubqueries
+	}
+	return 0
+}
+
 func init() {
 	proto.RegisterType((*Stats)(nil), "stats.Stats")
 }
@@ -125,29 +179,35 @@ func init() {
 func init() { proto.RegisterFile("stats.proto", fileDescriptor_b4756a0aec8b9d44) }
 
 var fileDescriptor_b4756a0aec8b9d44 = []byte{
-	// 340 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x54, 0x91, 0xbd, 0x52, 0xea, 0x40,
-	0x14, 0xc7, 0x77, 0xb9, 0xc0, 0x70, 0x97, 0xcb, 0x75, 0x8c, 0x16, 0x91, 0xe2, 0xc0, 0x68, 0x21,
-	0x8d, 0xc1, 0xd1, 0xd2, 0xc6, 0x01, 0x5f, 0x40, 0xb0, 0xb2, 0xc9, 0xe4, 0x63, 0x49, 0x32, 0x06,
-	0x16, 0xb3, 0x9b, 0x71, 0xec, 0x7c, 0x04, 0x4b, 0x1f, 0xc1, 0x19, 0x5f, 0x84, 0x92, 0x92, 0x4a,
-	0x65, 0x69, 0x2c, 0x79, 0x04, 0x27, 0x27, 0xc1, 0x8f, 0x6e, 0xcf, 0xf9, 0xfd, 0x7f, 0xfb, 0x9f,
-	0xd9, 0x65, 0x75, 0xa9, 0x1c, 0x25, 0xad, 0x69, 0x22, 0x94, 0x30, 0x2a, 0x38, 0x34, 0x8f, 0x82,
-	0x48, 0x85, 0xa9, 0x6b, 0x79, 0x62, 0xdc, 0x0d, 0x44, 0x20, 0xba, 0x48, 0xdd, 0x74, 0x84, 0x13,
-	0x0e, 0x78, 0xca, 0xad, 0x26, 0x04, 0x42, 0x04, 0x31, 0xff, 0x4e, 0xf9, 0x69, 0xe2, 0xa8, 0x48,
-	0x4c, 0x72, 0xbe, 0xff, 0x52, 0x62, 0x95, 0x61, 0x76, 0xb1, 0x71, 0xce, 0xfe, 0xde, 0x39, 0x71,
-	0x6c, 0xab, 0x68, 0xcc, 0x4d, 0xda, 0xa6, 0x9d, 0xfa, 0xc9, 0x9e, 0x95, 0xdb, 0xd6, 0xc6, 0xb6,
-	0x2e, 0x0a, 0xbb, 0x57, 0x9b, 0xbd, 0xb6, 0xc8, 0xd3, 0x5b, 0x8b, 0x0e, 0x6a, 0x99, 0x75, 0x15,
-	0x8d, 0xb9, 0x71, 0xcc, 0x76, 0x47, 0x5c, 0x79, 0x21, 0xf7, 0x6d, 0xc9, 0x93, 0x88, 0x4b, 0xdb,
-	0x13, 0xe9, 0x44, 0x99, 0xa5, 0x36, 0xed, 0x94, 0x07, 0x46, 0xc1, 0x86, 0x88, 0xfa, 0x19, 0x31,
-	0x2c, 0xb6, 0xb3, 0x31, 0xbc, 0x30, 0x9d, 0xdc, 0xd8, 0xee, 0xbd, 0xe2, 0xd2, 0xfc, 0x83, 0xc2,
-	0x76, 0x81, 0xfa, 0x19, 0xe9, 0x65, 0xe0, 0x67, 0x03, 0xe6, 0x37, 0x0d, 0xe5, 0x5f, 0x0d, 0x28,
-	0x14, 0x0d, 0x87, 0x6c, 0x4b, 0x86, 0x4e, 0xe2, 0x73, 0xdf, 0xbe, 0x4d, 0xb1, 0xd9, 0xac, 0xb4,
-	0x69, 0xa7, 0x31, 0xf8, 0x5f, 0xac, 0x2f, 0xf3, 0xad, 0x71, 0xc0, 0x1a, 0x72, 0x1a, 0x47, 0xea,
-	0x2b, 0x56, 0xc5, 0xd8, 0x3f, 0x5c, 0x16, 0xa1, 0xde, 0xd9, 0x7c, 0x09, 0x64, 0xb1, 0x04, 0xb2,
-	0x5e, 0x02, 0x7d, 0xd0, 0x40, 0x9f, 0x35, 0xd0, 0x99, 0x06, 0x3a, 0xd7, 0x40, 0xdf, 0x35, 0xd0,
-	0x0f, 0x0d, 0x64, 0xad, 0x81, 0x3e, 0xae, 0x80, 0xcc, 0x57, 0x40, 0x16, 0x2b, 0x20, 0xd7, 0xf9,
-	0xcf, 0xb9, 0x55, 0x7c, 0xc5, 0xd3, 0xcf, 0x00, 0x00, 0x00, 0xff, 0xff, 0x9d, 0x30, 0xbc, 0x87,
-	0xd6, 0x01, 0x00, 0x00,
+	// 447 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x8c, 0x92, 0xb1, 0x8e, 0xd3, 0x40,
+	0x10, 0x40, 0xbd, 0x90, 0x1c, 0xc9, 0xe6, 0x0e, 0x88, 0x89, 0x90, 0xb9, 0x62, 0x2f, 0x82, 0x82,
+	0x48, 0x48, 0x0e, 0x02, 0x3a, 0x1a, 0x94, 0xbb, 0x86, 0x0a, 0x48, 0xa8, 0x68, 0x2c, 0xc7, 0x1e,
+	0x27, 0x16, 0xb6, 0xd7, 0xe7, 0xdd, 0x15, 0xd0, 0xf1, 0x09, 0x94, 0x7c, 0x02, 0x9f, 0x72, 0x65,
+	0xca, 0xab, 0x80, 0x38, 0x0d, 0xe5, 0x95, 0x94, 0x68, 0x67, 0xd7, 0x51, 0x8e, 0x2a, 0x5d, 0x76,
+	0xde, 0xbc, 0x99, 0xc9, 0x8c, 0x69, 0x4f, 0xc8, 0x50, 0x0a, 0xbf, 0xac, 0xb8, 0xe4, 0x6e, 0x1b,
+	0x1f, 0xc7, 0x83, 0x05, 0x5f, 0x70, 0x8c, 0x8c, 0xf5, 0x2f, 0x03, 0x8f, 0xd9, 0x82, 0xf3, 0x45,
+	0x06, 0x63, 0x7c, 0xcd, 0x55, 0x32, 0x8e, 0x55, 0x15, 0xca, 0x94, 0x17, 0x86, 0x3f, 0xfc, 0xdb,
+	0xa2, 0xed, 0x99, 0xf6, 0xdd, 0x57, 0xb4, 0xfb, 0x29, 0xcc, 0xb2, 0x40, 0xa6, 0x39, 0x78, 0x64,
+	0x48, 0x46, 0xbd, 0x67, 0x0f, 0x7c, 0x63, 0xfb, 0x8d, 0xed, 0x9f, 0x59, 0x7b, 0xd2, 0xb9, 0xf8,
+	0x79, 0xe2, 0x7c, 0xff, 0x75, 0x42, 0xa6, 0x1d, 0x6d, 0xbd, 0x4f, 0x73, 0x70, 0x9f, 0xd2, 0x41,
+	0x02, 0x32, 0x5a, 0x42, 0x1c, 0x08, 0xa8, 0x52, 0x10, 0x41, 0xc4, 0x55, 0x21, 0xbd, 0x1b, 0x43,
+	0x32, 0x6a, 0x4d, 0x5d, 0xcb, 0x66, 0x88, 0x4e, 0x35, 0x71, 0x7d, 0x7a, 0xaf, 0x31, 0xa2, 0xa5,
+	0x2a, 0x3e, 0x06, 0xf3, 0x2f, 0x12, 0x84, 0x77, 0x13, 0x85, 0xbe, 0x45, 0xa7, 0x9a, 0x4c, 0x34,
+	0xd8, 0xed, 0x80, 0xf9, 0x4d, 0x87, 0xd6, 0xb5, 0x0e, 0x28, 0xd8, 0x0e, 0x8f, 0xe9, 0x1d, 0xb1,
+	0x0c, 0xab, 0x18, 0xe2, 0xe0, 0x5c, 0x61, 0x67, 0xaf, 0x3d, 0x24, 0xa3, 0xa3, 0xe9, 0x6d, 0x1b,
+	0x7e, 0x67, 0xa2, 0xee, 0x23, 0x7a, 0x24, 0xca, 0x2c, 0x95, 0xdb, 0xb4, 0x03, 0x4c, 0x3b, 0xc4,
+	0x60, 0x93, 0xb4, 0x33, 0x6f, 0x5a, 0xc4, 0xf0, 0xd9, 0xce, 0x7b, 0xeb, 0xda, 0xbc, 0xaf, 0x35,
+	0x31, 0xf3, 0xbe, 0xa0, 0xf7, 0x41, 0xc8, 0x34, 0x0f, 0xe5, 0xff, 0x3b, 0xe9, 0xa0, 0x32, 0xd8,
+	0xd2, 0xdd, 0xad, 0x4c, 0x28, 0x3d, 0x57, 0xa0, 0xc0, 0x9c, 0xa2, 0xbb, 0xff, 0x29, 0xba, 0xa8,
+	0xe1, 0x2d, 0xce, 0x68, 0x0f, 0x8a, 0x88, 0xc7, 0xb6, 0x08, 0xdd, 0xbf, 0x08, 0x35, 0x1e, 0x56,
+	0x79, 0x42, 0xfb, 0x22, 0xcc, 0xcb, 0x0c, 0x44, 0x50, 0x56, 0x3c, 0x02, 0x21, 0x20, 0xf6, 0x7a,
+	0x38, 0xfa, 0x5d, 0x0b, 0xde, 0x36, 0x71, 0xbd, 0x1c, 0x51, 0xaa, 0x22, 0xe0, 0x49, 0x12, 0x08,
+	0x35, 0x6f, 0xf6, 0x78, 0x88, 0x7b, 0xec, 0x6b, 0xf4, 0x26, 0x49, 0x66, 0x5b, 0x30, 0x79, 0xb9,
+	0x5a, 0x33, 0xe7, 0x72, 0xcd, 0x9c, 0xab, 0x35, 0x23, 0x5f, 0x6b, 0x46, 0x7e, 0xd4, 0x8c, 0x5c,
+	0xd4, 0x8c, 0xac, 0x6a, 0x46, 0x7e, 0xd7, 0x8c, 0xfc, 0xa9, 0x99, 0x73, 0x55, 0x33, 0xf2, 0x6d,
+	0xc3, 0x9c, 0xd5, 0x86, 0x39, 0x97, 0x1b, 0xe6, 0x7c, 0x30, 0x5f, 0xfb, 0xfc, 0x00, 0xff, 0xc2,
+	0xf3, 0x7f, 0x01, 0x00, 0x00, 0xff, 0xff, 0x1f, 0x46, 0x5f, 0x3b, 0x0a, 0x03, 0x00, 0x00,
 }
 
 func (this *Stats) Equal(that interface{}) bool {
@@ -187,13 +247,31 @@ func (this *Stats) Equal(that interface{}) bool {
 	if this.SplitQueries != that1.SplitQueries {
 		return false
 	}
+	if this.FetchedIndexBytes != that1.FetchedIndexBytes {
+		return false
+	}
+	if this.EstimatedSeriesCount != that1.EstimatedSeriesCount {
+		return false
+	}
+	if this.QueueTime != that1.QueueTime {
+		return false
+	}
+	if this.EncodeTime != that1.EncodeTime {
+		return false
+	}
+	if this.SamplesProcessed != that1.SamplesProcessed {
+		return false
+	}
+	if this.SpunOffSubqueries != that1.SpunOffSubqueries {
+		return false
+	}
 	return true
 }
 func (this *Stats) GoString() string {
 	if this == nil {
 		return "nil"
 	}
-	s := make([]string, 0, 10)
+	s := make([]string, 0, 16)
 	s = append(s, "&stats.Stats{")
 	s = append(s, "WallTime: "+fmt.Sprintf("%#v", this.WallTime)+",\n")
 	s = append(s, "FetchedSeriesCount: "+fmt.Sprintf("%#v", this.FetchedSeriesCount)+",\n")
@@ -201,6 +279,12 @@ func (this *Stats) GoString() string {
 	s = append(s, "FetchedChunksCount: "+fmt.Sprintf("%#v", this.FetchedChunksCount)+",\n")
 	s = append(s, "ShardedQueries: "+fmt.Sprintf("%#v", this.ShardedQueries)+",\n")
 	s = append(s, "SplitQueries: "+fmt.Sprintf("%#v", this.SplitQueries)+",\n")
+	s = append(s, "FetchedIndexBytes: "+fmt.Sprintf("%#v", this.FetchedIndexBytes)+",\n")
+	s = append(s, "EstimatedSeriesCount: "+fmt.Sprintf("%#v", this.EstimatedSeriesCount)+",\n")
+	s = append(s, "QueueTime: "+fmt.Sprintf("%#v", this.QueueTime)+",\n")
+	s = append(s, "EncodeTime: "+fmt.Sprintf("%#v", this.EncodeTime)+",\n")
+	s = append(s, "SamplesProcessed: "+fmt.Sprintf("%#v", this.SamplesProcessed)+",\n")
+	s = append(s, "SpunOffSubqueries: "+fmt.Sprintf("%#v", this.SpunOffSubqueries)+",\n")
 	s = append(s, "}")
 	return strings.Join(s, "")
 }
@@ -232,6 +316,42 @@ func (m *Stats) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.SpunOffSubqueries != 0 {
+		i = encodeVarintStats(dAtA, i, uint64(m.SpunOffSubqueries))
+		i--
+		dAtA[i] = 0x60
+	}
+	if m.SamplesProcessed != 0 {
+		i = encodeVarintStats(dAtA, i, uint64(m.SamplesProcessed))
+		i--
+		dAtA[i] = 0x58
+	}
+	n1, err1 := github_com_gogo_protobuf_types.StdDurationMarshalTo(m.EncodeTime, dAtA[i-github_com_gogo_protobuf_types.SizeOfStdDuration(m.EncodeTime):])
+	if err1 != nil {
+		return 0, err1
+	}
+	i -= n1
+	i = encodeVarintStats(dAtA, i, uint64(n1))
+	i--
+	dAtA[i] = 0x52
+	n2, err2 := github_com_gogo_protobuf_types.StdDurationMarshalTo(m.QueueTime, dAtA[i-github_com_gogo_protobuf_types.SizeOfStdDuration(m.QueueTime):])
+	if err2 != nil {
+		return 0, err2
+	}
+	i -= n2
+	i = encodeVarintStats(dAtA, i, uint64(n2))
+	i--
+	dAtA[i] = 0x4a
+	if m.EstimatedSeriesCount != 0 {
+		i = encodeVarintStats(dAtA, i, uint64(m.EstimatedSeriesCount))
+		i--
+		dAtA[i] = 0x40
+	}
+	if m.FetchedIndexBytes != 0 {
+		i = encodeVarintStats(dAtA, i, uint64(m.FetchedIndexBytes))
+		i--
+		dAtA[i] = 0x38
+	}
 	if m.SplitQueries != 0 {
 		i = encodeVarintStats(dAtA, i, uint64(m.SplitQueries))
 		i--
@@ -257,12 +377,12 @@ func (m *Stats) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x10
 	}
-	n1, err1 := github_com_gogo_protobuf_types.StdDurationMarshalTo(m.WallTime, dAtA[i-github_com_gogo_protobuf_types.SizeOfStdDuration(m.WallTime):])
-	if err1 != nil {
-		return 0, err1
+	n3, err3 := github_com_gogo_protobuf_types.StdDurationMarshalTo(m.WallTime, dAtA[i-github_com_gogo_protobuf_types.SizeOfStdDuration(m.WallTime):])
+	if err3 != nil {
+		return 0, err3
 	}
-	i -= n1
-	i = encodeVarintStats(dAtA, i, uint64(n1))
+	i -= n3
+	i = encodeVarintStats(dAtA, i, uint64(n3))
 	i--
 	dAtA[i] = 0xa
 	return len(dAtA) - i, nil
@@ -302,6 +422,22 @@ func (m *Stats) Size() (n int) {
 	if m.SplitQueries != 0 {
 		n += 1 + sovStats(uint64(m.SplitQueries))
 	}
+	if m.FetchedIndexBytes != 0 {
+		n += 1 + sovStats(uint64(m.FetchedIndexBytes))
+	}
+	if m.EstimatedSeriesCount != 0 {
+		n += 1 + sovStats(uint64(m.EstimatedSeriesCount))
+	}
+	l = github_com_gogo_protobuf_types.SizeOfStdDuration(m.QueueTime)
+	n += 1 + l + sovStats(uint64(l))
+	l = github_com_gogo_protobuf_types.SizeOfStdDuration(m.EncodeTime)
+	n += 1 + l + sovStats(uint64(l))
+	if m.SamplesProcessed != 0 {
+		n += 1 + sovStats(uint64(m.SamplesProcessed))
+	}
+	if m.SpunOffSubqueries != 0 {
+		n += 1 + sovStats(uint64(m.SpunOffSubqueries))
+	}
 	return n
 }
 
@@ -316,12 +452,18 @@ func (this *Stats) String() string {
 		return "nil"
 	}
 	s := strings.Join([]string{`&Stats{`,
-		`WallTime:` + strings.Replace(strings.Replace(fmt.Sprintf("%v", this.WallTime), "Duration", "duration.Duration", 1), `&`, ``, 1) + `,`,
+		`WallTime:` + strings.Replace(strings.Replace(fmt.Sprintf("%v", this.WallTime), "Duration", "durationpb.Duration", 1), `&`, ``, 1) + `,`,
 		`FetchedSeriesCount:` + fmt.Sprintf("%v", this.FetchedSeriesCount) + `,`,
 		`FetchedChunkBytes:` + fmt.Sprintf("%v", this.FetchedChunkBytes) + `,`,
 		`FetchedChunksCount:` + fmt.Sprintf("%v", this.FetchedChunksCount) + `,`,
 		`ShardedQueries:` + fmt.Sprintf("%v", this.ShardedQueries) + `,`,
 		`SplitQueries:` + fmt.Sprintf("%v", this.SplitQueries) + `,`,
+		`FetchedIndexBytes:` + fmt.Sprintf("%v", this.FetchedIndexBytes) + `,`,
+		`EstimatedSeriesCount:` + fmt.Sprintf("%v", this.EstimatedSeriesCount) + `,`,
+		`QueueTime:` + strings.Replace(strings.Replace(fmt.Sprintf("%v", this.QueueTime), "Duration", "durationpb.Duration", 1), `&`, ``, 1) + `,`,
+		`EncodeTime:` + strings.Replace(strings.Replace(fmt.Sprintf("%v", this.EncodeTime), "Duration", "durationpb.Duration", 1), `&`, ``, 1) + `,`,
+		`SamplesProcessed:` + fmt.Sprintf("%v", this.SamplesProcessed) + `,`,
+		`SpunOffSubqueries:` + fmt.Sprintf("%v", this.SpunOffSubqueries) + `,`,
 		`}`,
 	}, "")
 	return s
@@ -487,6 +629,148 @@ func (m *Stats) Unmarshal(dAtA []byte) error {
 				b := dAtA[iNdEx]
 				iNdEx++
 				m.SplitQueries |= uint32(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 7:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field FetchedIndexBytes", wireType)
+			}
+			m.FetchedIndexBytes = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowStats
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.FetchedIndexBytes |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 8:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EstimatedSeriesCount", wireType)
+			}
+			m.EstimatedSeriesCount = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowStats
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.EstimatedSeriesCount |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 9:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field QueueTime", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowStats
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthStats
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthStats
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := github_com_gogo_protobuf_types.StdDurationUnmarshal(&m.QueueTime, dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 10:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EncodeTime", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowStats
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthStats
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthStats
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := github_com_gogo_protobuf_types.StdDurationUnmarshal(&m.EncodeTime, dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 11:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SamplesProcessed", wireType)
+			}
+			m.SamplesProcessed = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowStats
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.SamplesProcessed |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 12:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field SpunOffSubqueries", wireType)
+			}
+			m.SpunOffSubqueries = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowStats
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.SpunOffSubqueries |= uint32(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}

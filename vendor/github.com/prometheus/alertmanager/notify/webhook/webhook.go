@@ -17,18 +17,26 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
+	"fmt"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	commoncfg "github.com/prometheus/common/config"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/template"
+	"github.com/prometheus/alertmanager/tracing"
 	"github.com/prometheus/alertmanager/types"
 )
+
+var tracer = otel.Tracer("github.com/prometheus/alertmanager/notify/webhook")
 
 // Notifier implements a Notifier for generic webhooks.
 type Notifier struct {
@@ -45,6 +53,10 @@ func New(conf *config.WebhookConfig, t *template.Template, l log.Logger, httpOpt
 	if err != nil {
 		return nil, err
 	}
+
+	// instrument for tracing
+	client.Transport = tracing.Transport(client.Transport, "webhook")
+
 	return &Notifier{
 		conf:   conf,
 		tmpl:   t,
@@ -52,11 +64,7 @@ func New(conf *config.WebhookConfig, t *template.Template, l log.Logger, httpOpt
 		client: client,
 		// Webhooks are assumed to respond with 2xx response codes on a successful
 		// request and 5xx response codes are assumed to be recoverable.
-		retrier: &notify.Retrier{
-			CustomDetailsFunc: func(int, io.Reader) string {
-				return conf.URL.String()
-			},
-		},
+		retrier: &notify.Retrier{},
 	}, nil
 }
 
@@ -80,6 +88,11 @@ func truncateAlerts(maxAlerts uint64, alerts []*types.Alert) ([]*types.Alert, ui
 
 // Notify implements the Notifier interface.
 func (n *Notifier) Notify(ctx context.Context, alerts ...*types.Alert) (bool, error) {
+	ctx, span := tracer.Start(ctx, "webhook.Notifier.Notify", trace.WithAttributes(
+		attribute.Int("alerts", len(alerts)),
+	))
+	defer span.End()
+
 	alerts, numTruncated := truncateAlerts(n.conf.MaxAlerts, alerts)
 	data := notify.GetTemplateData(ctx, n.tmpl, alerts, n.logger)
 
@@ -100,11 +113,35 @@ func (n *Notifier) Notify(ctx context.Context, alerts ...*types.Alert) (bool, er
 		return false, err
 	}
 
-	resp, err := notify.PostJSON(ctx, n.client, n.conf.URL.String(), &buf)
-	if err != nil {
-		return true, err
+	var url string
+	if n.conf.URL != nil {
+		url = n.conf.URL.String()
+	} else {
+		content, err := os.ReadFile(n.conf.URLFile)
+		if err != nil {
+			return false, fmt.Errorf("read url_file: %w", err)
+		}
+		url = strings.TrimSpace(string(content))
 	}
-	notify.Drain(resp)
 
-	return n.retrier.Check(resp.StatusCode, nil)
+	if n.conf.Timeout > 0 {
+		postCtx, cancel := context.WithTimeoutCause(ctx, n.conf.Timeout, fmt.Errorf("configured webhook timeout reached (%s)", n.conf.Timeout))
+		defer cancel()
+		ctx = postCtx
+	}
+
+	resp, err := notify.PostJSON(ctx, n.client, url, &buf)
+	if err != nil {
+		if ctx.Err() != nil {
+			err = fmt.Errorf("%w: %w", err, context.Cause(ctx))
+		}
+		return true, notify.RedactURL(err)
+	}
+	defer notify.Drain(resp)
+
+	shouldRetry, err := n.retrier.Check(resp.StatusCode, resp.Body)
+	if err != nil {
+		return shouldRetry, notify.NewErrorWithReason(notify.GetFailureReasonFromStatusCode(resp.StatusCode), err)
+	}
+	return shouldRetry, err
 }

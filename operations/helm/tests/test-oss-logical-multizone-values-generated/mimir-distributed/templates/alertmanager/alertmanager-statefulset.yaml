@@ -44,25 +44,22 @@ spec:
     spec:
       serviceAccountName: test-oss-logical-multizone-values-mimir
       securityContext:
-        {}
-      initContainers:
-        []
-      nodeSelector:
-        {}
-      affinity:
-        {}
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: mimir
-              app.kubernetes.io/instance: test-oss-logical-multizone-values
-              app.kubernetes.io/component: alertmanager
-      tolerations:
-        []
-      terminationGracePeriodSeconds: 60
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: mimir
+            app.kubernetes.io/instance: test-oss-logical-multizone-values
+            app.kubernetes.io/component: alertmanager
+      terminationGracePeriodSeconds: 900
       volumes:
         - name: config
           configMap:
@@ -79,6 +76,9 @@ spec:
           emptyDir: {}
         - name: active-queries
           emptyDir: {}
+        - name: alertmanager-fallback-config
+          configMap:
+            name: test-oss-logical-multizone-values-mimir-alertmanager-fallback-config
       containers:
         - name: alertmanager
           imagePullPolicy: IfNotPresent
@@ -87,6 +87,10 @@ spec:
             - "-config.expand-env=true"
             - "-config.file=/etc/mimir/mimir.yaml"
             - "-alertmanager.sharding-ring.instance-availability-zone=zone-a"
+            # Prometheus HTTP client used to send alerts has a hard-coded idle
+            # timeout of 5 minutes, therefore the server timeout for Alertmanager
+            # needs to be higher to avoid connections being closed abruptly.
+            - "-server.http-idle-timeout=6m"
           volumeMounts:
             - name: config
               mountPath: /etc/mimir
@@ -94,6 +98,8 @@ spec:
               mountPath: /var/mimir
             - name: storage
               mountPath: "/data"
+            - name: alertmanager-fallback-config
+              mountPath: /configs/
             - name: tmp
               mountPath: /tmp
             - name: active-queries
@@ -118,9 +124,11 @@ spec:
           resources:
             limits: null
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
-          env:
-          envFrom:
 ---
 # Source: mimir-distributed/templates/alertmanager/alertmanager-statefulset.yaml
 apiVersion: apps/v1
@@ -167,25 +175,22 @@ spec:
     spec:
       serviceAccountName: test-oss-logical-multizone-values-mimir
       securityContext:
-        {}
-      initContainers:
-        []
-      nodeSelector:
-        {}
-      affinity:
-        {}
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: mimir
-              app.kubernetes.io/instance: test-oss-logical-multizone-values
-              app.kubernetes.io/component: alertmanager
-      tolerations:
-        []
-      terminationGracePeriodSeconds: 60
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: mimir
+            app.kubernetes.io/instance: test-oss-logical-multizone-values
+            app.kubernetes.io/component: alertmanager
+      terminationGracePeriodSeconds: 900
       volumes:
         - name: config
           configMap:
@@ -202,6 +207,9 @@ spec:
           emptyDir: {}
         - name: active-queries
           emptyDir: {}
+        - name: alertmanager-fallback-config
+          configMap:
+            name: test-oss-logical-multizone-values-mimir-alertmanager-fallback-config
       containers:
         - name: alertmanager
           imagePullPolicy: IfNotPresent
@@ -210,6 +218,10 @@ spec:
             - "-config.expand-env=true"
             - "-config.file=/etc/mimir/mimir.yaml"
             - "-alertmanager.sharding-ring.instance-availability-zone=zone-b"
+            # Prometheus HTTP client used to send alerts has a hard-coded idle
+            # timeout of 5 minutes, therefore the server timeout for Alertmanager
+            # needs to be higher to avoid connections being closed abruptly.
+            - "-server.http-idle-timeout=6m"
           volumeMounts:
             - name: config
               mountPath: /etc/mimir
@@ -217,6 +229,8 @@ spec:
               mountPath: /var/mimir
             - name: storage
               mountPath: "/data"
+            - name: alertmanager-fallback-config
+              mountPath: /configs/
             - name: tmp
               mountPath: /tmp
             - name: active-queries
@@ -241,9 +255,11 @@ spec:
           resources:
             limits: null
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
-          env:
-          envFrom:
 ---
 # Source: mimir-distributed/templates/alertmanager/alertmanager-statefulset.yaml
 apiVersion: apps/v1
@@ -290,25 +306,22 @@ spec:
     spec:
       serviceAccountName: test-oss-logical-multizone-values-mimir
       securityContext:
-        {}
-      initContainers:
-        []
-      nodeSelector:
-        {}
-      affinity:
-        {}
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: mimir
-              app.kubernetes.io/instance: test-oss-logical-multizone-values
-              app.kubernetes.io/component: alertmanager
-      tolerations:
-        []
-      terminationGracePeriodSeconds: 60
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: mimir
+            app.kubernetes.io/instance: test-oss-logical-multizone-values
+            app.kubernetes.io/component: alertmanager
+      terminationGracePeriodSeconds: 900
       volumes:
         - name: config
           configMap:
@@ -325,6 +338,9 @@ spec:
           emptyDir: {}
         - name: active-queries
           emptyDir: {}
+        - name: alertmanager-fallback-config
+          configMap:
+            name: test-oss-logical-multizone-values-mimir-alertmanager-fallback-config
       containers:
         - name: alertmanager
           imagePullPolicy: IfNotPresent
@@ -333,6 +349,10 @@ spec:
             - "-config.expand-env=true"
             - "-config.file=/etc/mimir/mimir.yaml"
             - "-alertmanager.sharding-ring.instance-availability-zone=zone-c"
+            # Prometheus HTTP client used to send alerts has a hard-coded idle
+            # timeout of 5 minutes, therefore the server timeout for Alertmanager
+            # needs to be higher to avoid connections being closed abruptly.
+            - "-server.http-idle-timeout=6m"
           volumeMounts:
             - name: config
               mountPath: /etc/mimir
@@ -340,6 +360,8 @@ spec:
               mountPath: /var/mimir
             - name: storage
               mountPath: "/data"
+            - name: alertmanager-fallback-config
+              mountPath: /configs/
             - name: tmp
               mountPath: /tmp
             - name: active-queries
@@ -364,6 +386,8 @@ spec:
           resources:
             limits: null
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
-          env:
-          envFrom:

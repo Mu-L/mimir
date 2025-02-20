@@ -8,8 +8,8 @@ package thanos;
 
 option go_package = "storepb";
 
-import "gogoproto/gogo.proto";
-import "github.com/grafana/mimir/pkg/storegateway/labelpb/types.proto";
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+import "github.com/grafana/mimir/pkg/mimirpb/mimir.proto";
 
 option (gogoproto.sizer_all) = true;
 option (gogoproto.marshaler_all) = true;
@@ -25,26 +25,61 @@ option (gogoproto.goproto_sizecache_all) = false;
 message Chunk {
   enum Encoding {
     Chunk_XOR = 0;
+    Chunk_Histogram = 1;
+    Chunk_FloatHistogram = 2;
   }
   Encoding type  = 1;
-  bytes data     = 2;
+  bytes data     = 2 [(gogoproto.nullable) = false, (gogoproto.customtype) = "github.com/grafana/mimir/pkg/mimirpb.UnsafeByteSlice"];
 }
 
 message Series {
-  repeated Label labels      = 1 [(gogoproto.nullable) = false, (gogoproto.customtype) = "github.com/grafana/mimir/pkg/storegateway/labelpb.ZLabel"];
+  repeated cortexpb.LabelPair labels      = 1 [(gogoproto.nullable) = false, (gogoproto.customtype) = "github.com/grafana/mimir/pkg/mimirpb.LabelAdapter"];
   repeated AggrChunk chunks  = 2 [(gogoproto.nullable) = false];
 }
+
+message StreamingSeries {
+  repeated cortexpb.LabelPair labels  = 1 [(gogoproto.nullable) = false, (gogoproto.customtype) = "github.com/grafana/mimir/pkg/mimirpb.LabelAdapter"];
+}
+
+message StreamingSeriesBatch {
+  repeated StreamingSeries series = 1;
+  bool is_end_of_series_stream = 2;
+}
+
+message StreamingChunks {
+  uint64 series_index = 1; // Index into list of all series previously sent with SeriesResponse messages by this storegateway during this query response.
+  repeated AggrChunk chunks = 2 [(gogoproto.nullable) = false];
+}
+
+message StreamingChunksBatch {
+  repeated StreamingChunks series = 1;
+}
+
+message StreamingChunksEstimate {
+  uint64 estimated_chunk_count = 1;
+}
+
 
 message AggrChunk {
   int64 min_time = 1;
   int64 max_time = 2;
 
-  Chunk raw     = 3;
-  Chunk count   = 4;
-  Chunk sum     = 5;
-  Chunk min     = 6;
-  Chunk max     = 7;
-  Chunk counter = 8;
+  Chunk raw = 3 [(gogoproto.nullable) = false];
+
+  // Thanos count.
+  reserved 4;
+
+  // Thanos sum.
+  reserved 5;
+
+  // Thanos min.
+  reserved 6;
+
+  // Thanos max.
+  reserved 7;
+
+  // Thanos counter.
+  reserved 8;
 }
 
 // Matcher specifies a rule, which can match or set of labels or not.

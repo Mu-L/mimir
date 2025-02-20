@@ -6,10 +6,13 @@
 
 set -e
 
+# Use GNU sed on MacOS falling back to `sed` everywhere else
+SED=$(which gsed || which sed)
+
 check_required_setup() {
   # Ensure "gh" tool is installed.
   if ! command -v gh &> /dev/null; then
-    echo "The 'gh' command cannot be found. Please install it: https://cli.github.com"
+    echo "The 'gh' command cannot be found. Please install it: https://cli.github.com" > /dev/stderr
     exit 1
   fi
 
@@ -22,11 +25,12 @@ check_required_setup() {
   fi
 }
 
+# Last release is the version we want to release now.
 find_last_release() {
-  LAST_RELEASE_TAG=$(git tag --list 'mimir-[0-9]*' | sort -V | tail -1)
+  LAST_RELEASE_TAG=$(git describe --abbrev=0 --match 'mimir-[0-9]*')
 
   if [ -z "${LAST_RELEASE_TAG}" ]; then
-    echo "Unable to find the last release git tag"
+    echo "Unable to find the last release git tag" > /dev/stderr
     exit 1
   fi
 
@@ -38,11 +42,25 @@ find_last_release() {
   export LAST_RELEASE_VERSION
 }
 
+# Previous release is one version before last release.
+# If last release is an rc, previous release can be any rc or non-rc.
+# If last release is a stable (non-rc) release, previous release must be a non-rc release.
 find_prev_release() {
-  PREV_RELEASE_TAG=$(git tag --list 'mimir-[0-9]*' | sort -V | tail -2 | head -1)
+  find_last_release
+
+  ALL_RELEASE_TAGS=$(git tag --list 'mimir-[0-9]*')
+
+  # To sort rc version correctly we use sed to append non-rc version with a temporary suffix
+  SORTED_RELEASE_TAGS=$(echo "$ALL_RELEASE_TAGS" | $SED '/rc/b; s/\(.*\)/\1-xx.x/' | sort --version-sort | $SED 's/-xx.x//')
+
+  if [[ $LAST_RELEASE_VERSION =~ "-rc" ]]; then
+    PREV_RELEASE_TAG=$(echo "$SORTED_RELEASE_TAGS" | grep $(echo $LAST_RELEASE_VERSION) -B1 | head -1)
+  else
+    PREV_RELEASE_TAG=$(echo "$SORTED_RELEASE_TAGS" | grep -v -- '-rc' | grep $(echo $LAST_RELEASE_VERSION) -B1 | head -1)
+  fi
 
   if [ -z "${PREV_RELEASE_TAG}" ]; then
-    echo "Unable to find the previous release git tag"
+    echo "Unable to find the previous release git tag" > /dev/stderr
     exit 1
   fi
 

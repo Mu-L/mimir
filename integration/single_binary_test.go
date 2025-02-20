@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //go:build requires_docker
-// +build requires_docker
 
 package integration
 
@@ -13,6 +12,7 @@ import (
 	"github.com/grafana/e2e"
 	e2ecache "github.com/grafana/e2e/cache"
 	e2edb "github.com/grafana/e2e/db"
+	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/require"
 
 	"github.com/grafana/mimir/integration/e2emimir"
@@ -41,8 +41,10 @@ func TestMimirShouldStartInSingleBinaryModeWithAllMemcachedConfigured(t *testing
 		"-blocks-storage.bucket-store.chunks-cache.backend":               "memcached",
 		"-blocks-storage.bucket-store.chunks-cache.memcached.addresses":   "dns+" + memcached.NetworkEndpoint(e2ecache.MemcachedPort),
 		// Ingester.
-		"-ingester.ring.store":           "consul",
-		"-ingester.ring.consul.hostname": consul.NetworkHTTPEndpoint(),
+		"-ingester.ring.store":                     "consul",
+		"-ingester.ring.consul.hostname":           consul.NetworkHTTPEndpoint(),
+		"-ingester.partition-ring.store":           "consul",
+		"-ingester.partition-ring.consul.hostname": consul.NetworkHTTPEndpoint(),
 		// Distributor.
 		"-ingester.ring.replication-factor": "2",
 		"-distributor.ring.store":           "consul",
@@ -54,12 +56,25 @@ func TestMimirShouldStartInSingleBinaryModeWithAllMemcachedConfigured(t *testing
 		// Compactor.
 		"-compactor.ring.store":           "consul",
 		"-compactor.ring.consul.hostname": consul.NetworkHTTPEndpoint(),
-		"-compactor.cleanup-interval":     "2s", // Update bucket index often.
 	})
 
 	// Ensure Mimir successfully starts.
 	mimir := e2emimir.NewSingleBinary("mimir-1", e2e.MergeFlags(DefaultSingleBinaryFlags(), flags))
 	require.NoError(t, s.StartAndWaitReady(mimir))
+
+	// Ensure proper memcached metrics are present.
+	require.NoError(t, mimir.WaitSumMetricsWithOptions(e2e.GreaterOrEqual(1), []string{"thanos_cache_client_info"}, e2e.WithLabelMatchers(
+		labels.MustNewMatcher(labels.MatchEqual, "name", "frontend-cache"),
+		labels.MustNewMatcher(labels.MatchEqual, "backend", "memcached"),
+	)))
+	require.NoError(t, mimir.WaitSumMetricsWithOptions(e2e.GreaterOrEqual(1), []string{"thanos_cache_client_info"}, e2e.WithLabelMatchers(
+		labels.MustNewMatcher(labels.MatchEqual, "name", "chunks-cache"),
+		labels.MustNewMatcher(labels.MatchEqual, "backend", "memcached"),
+	)))
+	require.NoError(t, mimir.WaitSumMetricsWithOptions(e2e.GreaterOrEqual(1), []string{"thanos_cache_client_info"}, e2e.WithLabelMatchers(
+		labels.MustNewMatcher(labels.MatchEqual, "name", "metadata-cache"),
+		labels.MustNewMatcher(labels.MatchEqual, "backend", "memcached"),
+	)))
 }
 
 // TestMimirCanParseIntZeroAsZeroDuration checks that integer 0 can be used as zero duration in the yaml configuration.

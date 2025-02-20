@@ -4,10 +4,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: test-enterprise-values-minio
-  namespace: "citestns"
   labels:
     app: minio
-    chart: minio-4.0.12
+    chart: minio-5.4.0
     release: test-enterprise-values
     heritage: Helm
 spec:
@@ -28,19 +27,20 @@ spec:
         app: minio
         release: test-enterprise-values
       annotations:
-        checksum/secrets: b427c600deff5bac367bb61b5a4ff5cdc7ce2ca16015931364912ddb99e66259
-        checksum/config: 350b6852bf63ce47325aad5658c376a80c38fd712994c85c88fa95bc92b5e3d0
+        checksum/secrets: b4b35a9a6bfb4c5b5264fb814e1bf6132e9b79117297d6172e9bec6a6747e410
+        checksum/config: 81fa039b1f86b60fd7ae9b76f872d9035fc2119b6041e3df6b44a58681e7e017
     spec:
       securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
+        
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
-
+        runAsGroup: 1000
+        runAsUser: 1000
+      
       serviceAccountName: minio-sa
       containers:
         - name: minio
-          image: "quay.io/minio/minio:RELEASE.2022-08-13T21-54-44Z"
+          image: "quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z"
           imagePullPolicy: IfNotPresent
           command:
             - "/bin/sh"
@@ -73,7 +73,9 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi      
+              memory: 128Mi
+          securityContext: 
+            readOnlyRootFilesystem: false      
       volumes:
         - name: export
           persistentVolumeClaim:
