@@ -7,11 +7,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
-	"github.com/efficientgo/tools/core/pkg/errcapture"
+	"github.com/efficientgo/core/errcapture"
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
 
@@ -51,9 +50,21 @@ func NewBucket(rootDir string) (*Bucket, error) {
 	return &Bucket{rootDir: absDir}, nil
 }
 
-// Iter calls f for each entry in the given directory. The argument to f is the full
-// object name including the prefix of the inspected directory.
-func (b *Bucket) Iter(ctx context.Context, dir string, f func(string) error, options ...objstore.IterOption) error {
+func (b *Bucket) Provider() objstore.ObjProvider { return objstore.FILESYSTEM }
+
+func (b *Bucket) SupportedIterOptions() []objstore.IterOptionType {
+	return []objstore.IterOptionType{objstore.Recursive, objstore.UpdatedAt}
+}
+
+func (b *Bucket) IterWithAttributes(ctx context.Context, dir string, f func(attrs objstore.IterObjectAttributes) error, options ...objstore.IterOption) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	if err := objstore.ValidateIterOptions(b.SupportedIterOptions(), options...); err != nil {
+		return err
+	}
+
 	params := objstore.ApplyIterOptions(options...)
 	absDir := filepath.Join(b.rootDir, dir)
 	info, err := os.Stat(absDir)
@@ -67,7 +78,7 @@ func (b *Bucket) Iter(ctx context.Context, dir string, f func(string) error, opt
 		return nil
 	}
 
-	files, err := ioutil.ReadDir(absDir)
+	files, err := os.ReadDir(absDir)
 	if err != nil {
 		return err
 	}
@@ -89,7 +100,7 @@ func (b *Bucket) Iter(ctx context.Context, dir string, f func(string) error, opt
 
 			if params.Recursive {
 				// Recursively list files in the subdirectory.
-				if err := b.Iter(ctx, name, f, options...); err != nil {
+				if err := b.IterWithAttributes(ctx, name, f, options...); err != nil {
 					return err
 				}
 
@@ -98,11 +109,40 @@ func (b *Bucket) Iter(ctx context.Context, dir string, f func(string) error, opt
 				continue
 			}
 		}
-		if err := f(name); err != nil {
+
+		attrs := objstore.IterObjectAttributes{
+			Name: name,
+		}
+		if params.LastModified {
+			absPath := filepath.Join(absDir, file.Name())
+			stat, err := os.Stat(absPath)
+			if err != nil {
+				return errors.Wrapf(err, "stat %s", name)
+			}
+			attrs.SetLastModified(stat.ModTime())
+		}
+		if err := f(attrs); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// Iter calls f for each entry in the given directory. The argument to f is the full
+// object name including the prefix of the inspected directory.
+func (b *Bucket) Iter(ctx context.Context, dir string, f func(string) error, opts ...objstore.IterOption) error {
+	// Only include recursive option since attributes are not used in this method.
+	var filteredOpts []objstore.IterOption
+	for _, opt := range opts {
+		if opt.Type == objstore.Recursive {
+			filteredOpts = append(filteredOpts, opt)
+			break
+		}
+	}
+
+	return b.IterWithAttributes(ctx, dir, func(attrs objstore.IterObjectAttributes) error {
+		return f(attrs.Name)
+	}, filteredOpts...)
 }
 
 // Get returns a reader for the given object name.
@@ -120,7 +160,11 @@ func (r *rangeReaderCloser) Close() error {
 }
 
 // Attributes returns information about the specified object.
-func (b *Bucket) Attributes(_ context.Context, name string) (objstore.ObjectAttributes, error) {
+func (b *Bucket) Attributes(ctx context.Context, name string) (objstore.ObjectAttributes, error) {
+	if ctx.Err() != nil {
+		return objstore.ObjectAttributes{}, ctx.Err()
+	}
+
 	file := filepath.Join(b.rootDir, name)
 	stat, err := os.Stat(file)
 	if err != nil {
@@ -134,13 +178,21 @@ func (b *Bucket) Attributes(_ context.Context, name string) (objstore.ObjectAttr
 }
 
 // GetRange returns a new range reader for the given object name and range.
-func (b *Bucket) GetRange(_ context.Context, name string, off, length int64) (io.ReadCloser, error) {
+func (b *Bucket) GetRange(ctx context.Context, name string, off, length int64) (io.ReadCloser, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
 	if name == "" {
 		return nil, errors.New("object name is empty")
 	}
 
-	file := filepath.Join(b.rootDir, name)
-	if _, err := os.Stat(file); err != nil {
+	var (
+		file = filepath.Join(b.rootDir, name)
+		stat os.FileInfo
+		err  error
+	)
+	if stat, err = os.Stat(file); err != nil {
 		return nil, errors.Wrapf(err, "stat %s", file)
 	}
 
@@ -149,22 +201,41 @@ func (b *Bucket) GetRange(_ context.Context, name string, off, length int64) (io
 		return nil, err
 	}
 
+	var newOffset int64
 	if off > 0 {
-		_, err := f.Seek(off, 0)
+		newOffset, err = f.Seek(off, 0)
 		if err != nil {
 			return nil, errors.Wrapf(err, "seek %v", off)
 		}
 	}
 
+	size := stat.Size() - newOffset
 	if length == -1 {
-		return f, nil
+		return objstore.ObjectSizerReadCloser{
+			ReadCloser: f,
+			Size: func() (int64, error) {
+				return size, nil
+			},
+		}, nil
 	}
 
-	return &rangeReaderCloser{Reader: io.LimitReader(f, length), f: f}, nil
+	return objstore.ObjectSizerReadCloser{
+		ReadCloser: &rangeReaderCloser{
+			Reader: io.LimitReader(f, length),
+			f:      f,
+		},
+		Size: func() (int64, error) {
+			return min(length, size), nil
+		},
+	}, nil
 }
 
 // Exists checks if the given directory exists in memory.
-func (b *Bucket) Exists(_ context.Context, name string) (bool, error) {
+func (b *Bucket) Exists(ctx context.Context, name string) (bool, error) {
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+
 	info, err := os.Stat(filepath.Join(b.rootDir, name))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -176,7 +247,11 @@ func (b *Bucket) Exists(_ context.Context, name string) (bool, error) {
 }
 
 // Upload writes the file specified in src to into the memory.
-func (b *Bucket) Upload(_ context.Context, name string, r io.Reader) (err error) {
+func (b *Bucket) Upload(ctx context.Context, name string, r io.Reader) (err error) {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	file := filepath.Join(b.rootDir, name)
 	if err := os.MkdirAll(filepath.Dir(file), os.ModePerm); err != nil {
 		return err
@@ -212,7 +287,11 @@ func isDirEmpty(name string) (ok bool, err error) {
 }
 
 // Delete removes all data prefixed with the dir.
-func (b *Bucket) Delete(_ context.Context, name string) error {
+func (b *Bucket) Delete(ctx context.Context, name string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	file := filepath.Join(b.rootDir, name)
 	for file != b.rootDir {
 		if err := os.RemoveAll(file); err != nil {
@@ -233,6 +312,11 @@ func (b *Bucket) Delete(_ context.Context, name string) error {
 // IsObjNotFoundErr returns true if error means that object is not found. Relevant to Get operations.
 func (b *Bucket) IsObjNotFoundErr(err error) bool {
 	return os.IsNotExist(errors.Cause(err))
+}
+
+// IsAccessDeniedErr returns true if access to object is denied.
+func (b *Bucket) IsAccessDeniedErr(_ error) bool {
+	return false
 }
 
 func (b *Bucket) Close() error { return nil }

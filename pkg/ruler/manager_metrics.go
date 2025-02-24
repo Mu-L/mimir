@@ -6,33 +6,35 @@
 package ruler
 
 import (
+	"github.com/go-kit/log"
+	dskit_metrics "github.com/grafana/dskit/metrics"
 	"github.com/prometheus/client_golang/prometheus"
-
-	"github.com/grafana/mimir/pkg/util"
 )
 
 // ManagerMetrics aggregates metrics exported by the Prometheus
 // rules package and returns them as Mimir metrics
 type ManagerMetrics struct {
-	regs *util.UserRegistries
+	regs *dskit_metrics.TenantRegistries
 
-	EvalDuration         *prometheus.Desc
-	IterationDuration    *prometheus.Desc
-	IterationsMissed     *prometheus.Desc
-	IterationsScheduled  *prometheus.Desc
-	EvalTotal            *prometheus.Desc
-	EvalFailures         *prometheus.Desc
-	GroupInterval        *prometheus.Desc
-	GroupLastEvalTime    *prometheus.Desc
-	GroupLastDuration    *prometheus.Desc
-	GroupRules           *prometheus.Desc
-	GroupLastEvalSamples *prometheus.Desc
+	EvalDuration             *prometheus.Desc
+	IterationDuration        *prometheus.Desc
+	IterationsMissed         *prometheus.Desc
+	IterationsScheduled      *prometheus.Desc
+	EvalTotal                *prometheus.Desc
+	EvalFailures             *prometheus.Desc
+	GroupInterval            *prometheus.Desc
+	GroupLastEvalTime        *prometheus.Desc
+	GroupLastDuration        *prometheus.Desc
+	GroupLastRuleDurationSum *prometheus.Desc
+	GroupLastRestoreDuration *prometheus.Desc
+	GroupRules               *prometheus.Desc
+	GroupLastEvalSamples     *prometheus.Desc
 }
 
 // NewManagerMetrics returns a ManagerMetrics struct
-func NewManagerMetrics() *ManagerMetrics {
+func NewManagerMetrics(logger log.Logger) *ManagerMetrics {
 	return &ManagerMetrics{
-		regs: util.NewUserRegistries(),
+		regs: dskit_metrics.NewTenantRegistries(logger),
 
 		EvalDuration: prometheus.NewDesc(
 			"cortex_prometheus_rule_evaluation_duration_seconds",
@@ -88,6 +90,18 @@ func NewManagerMetrics() *ManagerMetrics {
 			[]string{"user", "rule_group"},
 			nil,
 		),
+		GroupLastRuleDurationSum: prometheus.NewDesc(
+			"cortex_prometheus_rule_group_last_rule_duration_sum_seconds",
+			"The sum of time in seconds it took to evaluate each rule in the group regardless of concurrency. This should be higher than the group duration if rules are evaluated concurrently.",
+			[]string{"user", "rule_group"},
+			nil,
+		),
+		GroupLastRestoreDuration: prometheus.NewDesc(
+			"cortex_prometheus_rule_group_last_restore_duration_seconds",
+			"The duration of the last alert rules alerts restoration using the `ALERTS_FOR_STATE` series across all rule groups.",
+			[]string{"user"},
+			nil,
+		),
 		GroupRules: prometheus.NewDesc(
 			"cortex_prometheus_rule_group_rules",
 			"The number of rules.",
@@ -105,12 +119,12 @@ func NewManagerMetrics() *ManagerMetrics {
 
 // AddUserRegistry adds a user-specific Prometheus registry.
 func (m *ManagerMetrics) AddUserRegistry(user string, reg *prometheus.Registry) {
-	m.regs.AddUserRegistry(user, reg)
+	m.regs.AddTenantRegistry(user, reg)
 }
 
 // RemoveUserRegistry removes user-specific Prometheus registry.
 func (m *ManagerMetrics) RemoveUserRegistry(user string) {
-	m.regs.RemoveUserRegistry(user, true)
+	m.regs.RemoveTenantRegistry(user, true)
 }
 
 // Describe implements the Collector interface
@@ -124,28 +138,33 @@ func (m *ManagerMetrics) Describe(out chan<- *prometheus.Desc) {
 	out <- m.GroupInterval
 	out <- m.GroupLastEvalTime
 	out <- m.GroupLastDuration
+	out <- m.GroupLastRuleDurationSum
+	out <- m.GroupLastRestoreDuration
 	out <- m.GroupRules
 	out <- m.GroupLastEvalSamples
 }
 
 // Collect implements the Collector interface
 func (m *ManagerMetrics) Collect(out chan<- prometheus.Metric) {
-	data := m.regs.BuildMetricFamiliesPerUser()
+	data := m.regs.BuildMetricFamiliesPerTenant()
 
 	// WARNING: It is important that all metrics generated in this method are "Per User".
 	// Thanks to that we can actually *remove* metrics for given user (see RemoveUserRegistry).
 	// If same user is later re-added, all metrics will start from 0, which is fine.
 
-	data.SendSumOfSummariesPerUser(out, m.EvalDuration, "prometheus_rule_evaluation_duration_seconds")
-	data.SendSumOfSummariesPerUser(out, m.IterationDuration, "prometheus_rule_group_duration_seconds")
+	data.SendSumOfSummariesPerTenant(out, m.EvalDuration, "prometheus_rule_evaluation_duration_seconds")
+	data.SendSumOfSummariesPerTenant(out, m.IterationDuration, "prometheus_rule_group_duration_seconds")
 
-	data.SendSumOfCountersPerUser(out, m.IterationsMissed, "prometheus_rule_group_iterations_missed_total", util.WithLabels("rule_group"))
-	data.SendSumOfCountersPerUser(out, m.IterationsScheduled, "prometheus_rule_group_iterations_total", util.WithLabels("rule_group"))
-	data.SendSumOfCountersPerUser(out, m.EvalTotal, "prometheus_rule_evaluations_total", util.WithLabels("rule_group"))
-	data.SendSumOfCountersPerUser(out, m.EvalFailures, "prometheus_rule_evaluation_failures_total", util.WithLabels("rule_group"))
-	data.SendSumOfGaugesPerUserWithLabels(out, m.GroupInterval, "prometheus_rule_group_interval_seconds", "rule_group")
-	data.SendSumOfGaugesPerUserWithLabels(out, m.GroupLastEvalTime, "prometheus_rule_group_last_evaluation_timestamp_seconds", "rule_group")
-	data.SendSumOfGaugesPerUserWithLabels(out, m.GroupLastDuration, "prometheus_rule_group_last_duration_seconds", "rule_group")
-	data.SendSumOfGaugesPerUserWithLabels(out, m.GroupRules, "prometheus_rule_group_rules", "rule_group")
-	data.SendSumOfGaugesPerUserWithLabels(out, m.GroupLastEvalSamples, "prometheus_rule_group_last_evaluation_samples", "rule_group")
+	data.SendSumOfGaugesPerTenant(out, m.GroupLastRestoreDuration, "prometheus_rule_group_last_restore_duration_seconds")
+
+	data.SendSumOfCountersPerTenant(out, m.IterationsMissed, "prometheus_rule_group_iterations_missed_total", dskit_metrics.WithLabels("rule_group"))
+	data.SendSumOfCountersPerTenant(out, m.IterationsScheduled, "prometheus_rule_group_iterations_total", dskit_metrics.WithLabels("rule_group"))
+	data.SendSumOfCountersPerTenant(out, m.EvalTotal, "prometheus_rule_evaluations_total", dskit_metrics.WithLabels("rule_group"))
+	data.SendSumOfCountersPerTenant(out, m.EvalFailures, "prometheus_rule_evaluation_failures_total", dskit_metrics.WithLabels("rule_group"))
+	data.SendSumOfGaugesPerTenant(out, m.GroupInterval, "prometheus_rule_group_interval_seconds", dskit_metrics.WithLabels("rule_group"))
+	data.SendSumOfGaugesPerTenant(out, m.GroupLastEvalTime, "prometheus_rule_group_last_evaluation_timestamp_seconds", dskit_metrics.WithLabels("rule_group"))
+	data.SendSumOfGaugesPerTenant(out, m.GroupLastDuration, "prometheus_rule_group_last_duration_seconds", dskit_metrics.WithLabels("rule_group"))
+	data.SendSumOfGaugesPerTenant(out, m.GroupLastRuleDurationSum, "prometheus_rule_group_last_rule_duration_sum_seconds", dskit_metrics.WithLabels("rule_group"))
+	data.SendSumOfGaugesPerTenant(out, m.GroupRules, "prometheus_rule_group_rules", dskit_metrics.WithLabels("rule_group"))
+	data.SendSumOfGaugesPerTenant(out, m.GroupLastEvalSamples, "prometheus_rule_group_last_evaluation_samples", dskit_metrics.WithLabels("rule_group"))
 }

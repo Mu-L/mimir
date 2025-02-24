@@ -10,6 +10,7 @@ import (
 
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/storage"
 
 	"github.com/grafana/mimir/pkg/mimirpb"
 )
@@ -72,32 +73,38 @@ func FromExemplarQueryRequest(req *ExemplarQueryRequest) (int64, int64, [][]*lab
 }
 
 // ToMetricsForLabelMatchersRequest builds a MetricsForLabelMatchersRequest proto
-func ToMetricsForLabelMatchersRequest(from, to model.Time, matchers []*labels.Matcher) (*MetricsForLabelMatchersRequest, error) {
+func ToMetricsForLabelMatchersRequest(from, to model.Time, hints *storage.SelectHints, matchers []*labels.Matcher) (*MetricsForLabelMatchersRequest, error) {
 	ms, err := ToLabelMatchers(matchers)
 	if err != nil {
 		return nil, err
 	}
 
+	var limit int64
+	if hints != nil && hints.Limit > 0 {
+		limit = int64(hints.Limit)
+	}
 	return &MetricsForLabelMatchersRequest{
 		StartTimestampMs: int64(from),
 		EndTimestampMs:   int64(to),
 		MatchersSet:      []*LabelMatchers{{Matchers: ms}},
+		Limit:            limit,
 	}, nil
 }
 
-// FromMetricsForLabelMatchersRequest unpacks a MetricsForLabelMatchersRequest proto
-func FromMetricsForLabelMatchersRequest(req *MetricsForLabelMatchersRequest) (model.Time, model.Time, [][]*labels.Matcher, error) {
+// FromMetricsForLabelMatchersRequest unpacks a MetricsForLabelMatchersRequest proto.
+func FromMetricsForLabelMatchersRequest(req *MetricsForLabelMatchersRequest) (*storage.SelectHints, [][]*labels.Matcher, error) {
 	matchersSet := make([][]*labels.Matcher, 0, len(req.MatchersSet))
 	for _, matchers := range req.MatchersSet {
 		matchers, err := FromLabelMatchers(matchers.Matchers)
 		if err != nil {
-			return 0, 0, nil, err
+			return nil, nil, err
 		}
 		matchersSet = append(matchersSet, matchers)
 	}
-	from := model.Time(req.StartTimestampMs)
-	to := model.Time(req.EndTimestampMs)
-	return from, to, matchersSet, nil
+	hints := &storage.SelectHints{
+		Limit: int(req.Limit),
+	}
+	return hints, matchersSet, nil
 }
 
 // FromMetricsForLabelMatchersResponse unpacks a MetricsForLabelMatchersResponse proto
@@ -110,62 +117,90 @@ func FromMetricsForLabelMatchersResponse(resp *MetricsForLabelMatchersResponse) 
 }
 
 // ToLabelValuesRequest builds a LabelValuesRequest proto
-func ToLabelValuesRequest(labelName model.LabelName, from, to model.Time, matchers []*labels.Matcher) (*LabelValuesRequest, error) {
+func ToLabelValuesRequest(labelName model.LabelName, from, to model.Time, hints *storage.LabelHints, matchers []*labels.Matcher) (*LabelValuesRequest, error) {
 	ms, err := ToLabelMatchers(matchers)
 	if err != nil {
 		return nil, err
 	}
 
+	var limit int64
+	if hints != nil && hints.Limit > 0 {
+		limit = int64(hints.Limit)
+	}
 	return &LabelValuesRequest{
 		LabelName:        string(labelName),
 		StartTimestampMs: int64(from),
 		EndTimestampMs:   int64(to),
 		Matchers:         &LabelMatchers{Matchers: ms},
+		Limit:            limit,
 	}, nil
 }
 
 // FromLabelValuesRequest unpacks a LabelValuesRequest proto
-func FromLabelValuesRequest(req *LabelValuesRequest) (string, int64, int64, []*labels.Matcher, error) {
+func FromLabelValuesRequest(req *LabelValuesRequest) (string, int64, int64, *storage.LabelHints, []*labels.Matcher, error) {
 	var err error
+	var hints *storage.LabelHints
 	var matchers []*labels.Matcher
 
 	if req.Matchers != nil {
 		matchers, err = FromLabelMatchers(req.Matchers.Matchers)
 		if err != nil {
-			return "", 0, 0, nil, err
+			return "", 0, 0, nil, nil, err
 		}
 	}
 
-	return req.LabelName, req.StartTimestampMs, req.EndTimestampMs, matchers, nil
+	if req.Limit > 0 {
+		hints = &storage.LabelHints{Limit: int(req.Limit)}
+	}
+
+	return req.LabelName, req.StartTimestampMs, req.EndTimestampMs, hints, matchers, nil
 }
 
 // ToLabelNamesRequest builds a LabelNamesRequest proto
-func ToLabelNamesRequest(from, to model.Time, matchers []*labels.Matcher) (*LabelNamesRequest, error) {
+func ToLabelNamesRequest(from, to model.Time, hints *storage.LabelHints, matchers []*labels.Matcher) (*LabelNamesRequest, error) {
 	ms, err := ToLabelMatchers(matchers)
 	if err != nil {
 		return nil, err
+	}
+
+	var limit int64
+	if hints != nil && hints.Limit > 0 {
+		limit = int64(hints.Limit)
 	}
 
 	return &LabelNamesRequest{
 		StartTimestampMs: int64(from),
 		EndTimestampMs:   int64(to),
 		Matchers:         &LabelMatchers{Matchers: ms},
+		Limit:            limit,
 	}, nil
 }
 
 // FromLabelNamesRequest unpacks a LabelNamesRequest proto
-func FromLabelNamesRequest(req *LabelNamesRequest) (int64, int64, []*labels.Matcher, error) {
+func FromLabelNamesRequest(req *LabelNamesRequest) (int64, int64, *storage.LabelHints, []*labels.Matcher, error) {
 	var err error
+	var hints *storage.LabelHints
 	var matchers []*labels.Matcher
-
 	if req.Matchers != nil {
 		matchers, err = FromLabelMatchers(req.Matchers.Matchers)
 		if err != nil {
-			return 0, 0, nil, err
+			return 0, 0, nil, nil, err
 		}
 	}
 
-	return req.StartTimestampMs, req.EndTimestampMs, matchers, nil
+	if req.Limit != 0 {
+		hints = &storage.LabelHints{Limit: int(req.Limit)}
+	}
+
+	return req.StartTimestampMs, req.EndTimestampMs, hints, matchers, nil
+}
+
+func ToActiveSeriesRequest(matchers []*labels.Matcher) (*ActiveSeriesRequest, error) {
+	ms, err := ToLabelMatchers(matchers)
+	if err != nil {
+		return nil, err
+	}
+	return &ActiveSeriesRequest{Matchers: ms}, nil
 }
 
 func ToLabelMatchers(matchers []*labels.Matcher) ([]*LabelMatcher, error) {
@@ -216,43 +251,4 @@ func FromLabelMatchers(matchers []*LabelMatcher) ([]*labels.Matcher, error) {
 		result = append(result, matcher)
 	}
 	return result, nil
-}
-
-// FastFingerprint runs the same algorithm as Prometheus labelSetToFastFingerprint()
-func FastFingerprint(ls []mimirpb.LabelAdapter) model.Fingerprint {
-	if len(ls) == 0 {
-		return model.Metric(nil).FastFingerprint()
-	}
-
-	var result uint64
-	for _, l := range ls {
-		sum := hashNew()
-		sum = hashAdd(sum, l.Name)
-		sum = hashAddByte(sum, model.SeparatorByte)
-		sum = hashAdd(sum, l.Value)
-		result ^= sum
-	}
-	return model.Fingerprint(result)
-}
-
-// Fingerprint runs the same algorithm as Prometheus labelSetToFingerprint()
-func Fingerprint(labels labels.Labels) model.Fingerprint {
-	sum := hashNew()
-	for _, label := range labels {
-		sum = hashAddString(sum, label.Name)
-		sum = hashAddByte(sum, model.SeparatorByte)
-		sum = hashAddString(sum, label.Value)
-		sum = hashAddByte(sum, model.SeparatorByte)
-	}
-	return model.Fingerprint(sum)
-}
-
-// LabelsToKeyString is used to form a string to be used as
-// the hashKey. Don't print, use l.String() for printing.
-func LabelsToKeyString(l labels.Labels) string {
-	// We are allocating 1024, even though most series are less than 600b long.
-	// But this is not an issue as this function is being inlined when called in a loop
-	// and buffer allocated is a static buffer and not a dynamic buffer on the heap.
-	b := make([]byte, 0, 1024)
-	return string(l.Bytes(b))
 }

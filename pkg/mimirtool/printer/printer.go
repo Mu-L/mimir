@@ -10,11 +10,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
-	"github.com/alecthomas/chroma/quick"
+	"github.com/alecthomas/chroma/v2/quick"
 	"github.com/mitchellh/colorstring"
 	"gopkg.in/yaml.v3"
 
@@ -29,13 +29,13 @@ type Printer struct {
 }
 
 // New returns a Printer struct
-func New(color bool) *Printer {
+func New(disableColor bool, forceColor bool, isTTY bool) *Printer {
 	return &Printer{
-		disableColor: color,
+		disableColor: !forceColor && (disableColor || !isTTY),
 		colorizer: colorstring.Colorize{
 			Colors:  colorstring.DefaultColors,
 			Reset:   true,
-			Disable: color,
+			Disable: !forceColor && (disableColor || !isTTY),
 		},
 	}
 }
@@ -192,7 +192,7 @@ func (p *Printer) PrintRuleSet(rules map[string][]rwrulefmt.RuleGroup, format st
 	for k := range rules {
 		nsKeys = append(nsKeys, k)
 	}
-	sort.Strings(nsKeys)
+	slices.Sort(nsKeys)
 
 	type namespaceAndRuleGroup struct {
 		Namespace string `json:"namespace" yaml:"namespace"`

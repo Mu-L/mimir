@@ -6,7 +6,7 @@
 package commands
 
 import (
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,7 +25,9 @@ var allMetricsInRuleTest = []string{
 	"apiserver_request_duration_seconds_bucket",
 	"apiserver_request_duration_seconds_count",
 	"apiserver_request_total",
-	"container_cpu_usage_seconds_total",
+	"code:apiserver_request_total:increase30d",
+	"code_verb:apiserver_request_total:increase1h",
+	"code_verb:apiserver_request_total:increase30d",
 	"container_memory_cache",
 	"container_memory_rss",
 	"container_memory_swap",
@@ -44,6 +46,7 @@ var allMetricsInRuleTest = []string{
 	"node_memory_MemAvailable_bytes",
 	"node_memory_MemFree_bytes",
 	"node_memory_Slab_bytes",
+	"node_namespace_pod:kube_pod_info:",
 	"scheduler_binding_duration_seconds_bucket",
 	"scheduler_e2e_scheduling_duration_seconds_bucket",
 	"scheduler_scheduling_algorithm_duration_seconds_bucket",
@@ -70,6 +73,6 @@ func TestParseMetricsInRuleFile(t *testing.T) {
 	for metric := range output.OverallMetrics {
 		metricsUsed = append(metricsUsed, metric)
 	}
-	sort.Strings(metricsUsed)
+	slices.Sort(metricsUsed)
 	assert.Equal(t, allMetricsInRuleTest, metricsUsed)
 }

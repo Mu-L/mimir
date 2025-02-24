@@ -13,19 +13,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-kit/log"
+	"github.com/grafana/dskit/httpgrpc"
+	"github.com/grafana/dskit/user"
 	"github.com/grafana/regexp"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/common/route"
 	"github.com/prometheus/prometheus/config"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/storage"
+	"github.com/prometheus/prometheus/util/annotations"
 	v1 "github.com/prometheus/prometheus/web/api/v1"
 	"github.com/stretchr/testify/require"
-	"github.com/weaveworks/common/httpgrpc"
-	"github.com/weaveworks/common/user"
 
 	"github.com/grafana/mimir/pkg/util/validation"
 )
@@ -43,7 +44,7 @@ func TestApiStatusCodes(t *testing.T) {
 		},
 
 		{
-			err:            validation.LimitError("limit exceeded"),
+			err:            validation.NewLimitError("limit exceeded"),
 			expectedString: "limit exceeded",
 			expectedCode:   422,
 		},
@@ -57,7 +58,7 @@ func TestApiStatusCodes(t *testing.T) {
 		{
 			err:            promql.ErrQueryCanceled("query execution"),
 			expectedString: "query was canceled",
-			expectedCode:   503,
+			expectedCode:   499,
 		},
 
 		{
@@ -96,13 +97,19 @@ func TestApiStatusCodes(t *testing.T) {
 		{
 			err:            context.Canceled,
 			expectedString: "context canceled",
-			expectedCode:   422,
+			expectedCode:   499,
 		},
 		// Status code 400 is remapped to 422 (only choice we have)
 		{
 			err:            errors.Wrap(httpgrpc.Errorf(http.StatusBadRequest, "test string"), "wrapped error"),
 			expectedString: "test string",
 			expectedCode:   422,
+		},
+
+		{
+			err:            httpgrpc.Errorf(http.StatusServiceUnavailable, "test"),
+			expectedString: "timeout",
+			expectedCode:   http.StatusServiceUnavailable,
 		},
 	} {
 		for k, q := range map[string]storage.SampleAndChunkQueryable{
@@ -128,7 +135,7 @@ func TestApiStatusCodes(t *testing.T) {
 
 func createPrometheusAPI(q storage.SampleAndChunkQueryable) *route.Router {
 	engine := promql.NewEngine(promql.EngineOpts{
-		Logger:             log.NewNopLogger(),
+		Logger:             promslog.NewNopLogger(),
 		Reg:                nil,
 		ActiveQueryTracker: nil,
 		MaxSamples:         100,
@@ -140,6 +147,7 @@ func createPrometheusAPI(q storage.SampleAndChunkQueryable) *route.Router {
 		q,
 		nil,
 		nil,
+		func(context.Context) v1.ScrapePoolsRetriever { return &DummyTargetRetriever{} },
 		func(context.Context) v1.TargetRetriever { return &DummyTargetRetriever{} },
 		func(context.Context) v1.AlertmanagerRetriever { return &DummyAlertmanagerRetriever{} },
 		func() config.Config { return config.Config{} },
@@ -149,16 +157,24 @@ func createPrometheusAPI(q storage.SampleAndChunkQueryable) *route.Router {
 		nil,   // Only needed for admin APIs.
 		"",    // This is for snapshots, which is disabled when admin APIs are disabled. Hence empty.
 		false, // Disable admin APIs.
-		log.NewNopLogger(),
+		promslog.NewNopLogger(),
 		func(context.Context) v1.RulesRetriever { return &DummyRulesRetriever{} },
 		0, 0, 0, // Remote read samples and concurrency limit.
 		false, // Not an agent.
 		regexp.MustCompile(".*"),
 		func() (v1.RuntimeInfo, error) { return v1.RuntimeInfo{}, errors.New("not implemented") },
 		&v1.PrometheusVersion{},
+		nil,
+		nil,
 		prometheus.DefaultGatherer,
 		nil,
 		nil,
+		false,
+		nil,
+		false,
+		false,
+		false,
+		0,
 	)
 
 	promRouter := route.New().WithPrefix("/api/v1")
@@ -172,11 +188,11 @@ type errorTestQueryable struct {
 	err error
 }
 
-func (t errorTestQueryable) ChunkQuerier(ctx context.Context, mint, maxt int64) (storage.ChunkQuerier, error) {
+func (t errorTestQueryable) ChunkQuerier(int64, int64) (storage.ChunkQuerier, error) {
 	return nil, t.err
 }
 
-func (t errorTestQueryable) Querier(ctx context.Context, mint, maxt int64) (storage.Querier, error) {
+func (t errorTestQueryable) Querier(int64, int64) (storage.Querier, error) {
 	if t.q != nil {
 		return t.q, nil
 	}
@@ -188,11 +204,11 @@ type errorTestQuerier struct {
 	err error
 }
 
-func (t errorTestQuerier) LabelValues(name string, matchers ...*labels.Matcher) ([]string, storage.Warnings, error) {
+func (t errorTestQuerier) LabelValues(context.Context, string, *storage.LabelHints, ...*labels.Matcher) ([]string, annotations.Annotations, error) {
 	return nil, nil, t.err
 }
 
-func (t errorTestQuerier) LabelNames(matchers ...*labels.Matcher) ([]string, storage.Warnings, error) {
+func (t errorTestQuerier) LabelNames(context.Context, *storage.LabelHints, ...*labels.Matcher) ([]string, annotations.Annotations, error) {
 	return nil, nil, t.err
 }
 
@@ -200,7 +216,7 @@ func (t errorTestQuerier) Close() error {
 	return nil
 }
 
-func (t errorTestQuerier) Select(sortSeries bool, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
+func (t errorTestQuerier) Select(context.Context, bool, *storage.SelectHints, ...*labels.Matcher) storage.SeriesSet {
 	if t.s != nil {
 		return t.s
 	}
@@ -223,6 +239,6 @@ func (t errorTestSeriesSet) Err() error {
 	return t.err
 }
 
-func (t errorTestSeriesSet) Warnings() storage.Warnings {
+func (t errorTestSeriesSet) Warnings() annotations.Annotations {
 	return nil
 }

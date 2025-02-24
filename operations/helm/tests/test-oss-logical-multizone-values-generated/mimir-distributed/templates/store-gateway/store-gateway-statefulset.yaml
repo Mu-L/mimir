@@ -14,9 +14,10 @@ metadata:
     rollout-group: store-gateway
     zone: zone-a
   annotations:
-    rollout-max-unavailable: "10"
+    rollout-max-unavailable: "50"
   namespace: "citestns"
 spec:
+  podManagementPolicy: OrderedReady
   replicas: 1
   selector:
     matchLabels:
@@ -44,25 +45,22 @@ spec:
     spec:
       serviceAccountName: test-oss-logical-multizone-values-mimir
       securityContext:
-        {}
-      initContainers:
-        []
-      nodeSelector:
-        {}
-      affinity:
-        {}
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: mimir
-              app.kubernetes.io/instance: test-oss-logical-multizone-values
-              app.kubernetes.io/component: store-gateway
-      tolerations:
-        []
-      terminationGracePeriodSeconds: 240
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: mimir
+            app.kubernetes.io/instance: test-oss-logical-multizone-values
+            app.kubernetes.io/component: store-gateway
+      terminationGracePeriodSeconds: 120
       volumes:
         - name: config
           configMap:
@@ -114,9 +112,14 @@ spec:
           resources:
             limits: null
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
           env:
-          envFrom:
+            - name: "JAEGER_REPORTER_MAX_QUEUE_SIZE"
+              value: "1000"
 ---
 # Source: mimir-distributed/templates/store-gateway/store-gateway-statefulset.yaml
 apiVersion: apps/v1
@@ -133,9 +136,10 @@ metadata:
     rollout-group: store-gateway
     zone: zone-b
   annotations:
-    rollout-max-unavailable: "10"
+    rollout-max-unavailable: "50"
   namespace: "citestns"
 spec:
+  podManagementPolicy: OrderedReady
   replicas: 1
   selector:
     matchLabels:
@@ -163,25 +167,22 @@ spec:
     spec:
       serviceAccountName: test-oss-logical-multizone-values-mimir
       securityContext:
-        {}
-      initContainers:
-        []
-      nodeSelector:
-        {}
-      affinity:
-        {}
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: mimir
-              app.kubernetes.io/instance: test-oss-logical-multizone-values
-              app.kubernetes.io/component: store-gateway
-      tolerations:
-        []
-      terminationGracePeriodSeconds: 240
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: mimir
+            app.kubernetes.io/instance: test-oss-logical-multizone-values
+            app.kubernetes.io/component: store-gateway
+      terminationGracePeriodSeconds: 120
       volumes:
         - name: config
           configMap:
@@ -233,9 +234,14 @@ spec:
           resources:
             limits: null
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
           env:
-          envFrom:
+            - name: "JAEGER_REPORTER_MAX_QUEUE_SIZE"
+              value: "1000"
 ---
 # Source: mimir-distributed/templates/store-gateway/store-gateway-statefulset.yaml
 apiVersion: apps/v1
@@ -252,9 +258,10 @@ metadata:
     rollout-group: store-gateway
     zone: zone-c
   annotations:
-    rollout-max-unavailable: "10"
+    rollout-max-unavailable: "50"
   namespace: "citestns"
 spec:
+  podManagementPolicy: OrderedReady
   replicas: 1
   selector:
     matchLabels:
@@ -282,25 +289,22 @@ spec:
     spec:
       serviceAccountName: test-oss-logical-multizone-values-mimir
       securityContext:
-        {}
-      initContainers:
-        []
-      nodeSelector:
-        {}
-      affinity:
-        {}
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: mimir
-              app.kubernetes.io/instance: test-oss-logical-multizone-values
-              app.kubernetes.io/component: store-gateway
-      tolerations:
-        []
-      terminationGracePeriodSeconds: 240
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: mimir
+            app.kubernetes.io/instance: test-oss-logical-multizone-values
+            app.kubernetes.io/component: store-gateway
+      terminationGracePeriodSeconds: 120
       volumes:
         - name: config
           configMap:
@@ -352,6 +356,11 @@ spec:
           resources:
             limits: null
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
           env:
-          envFrom:
+            - name: "JAEGER_REPORTER_MAX_QUEUE_SIZE"
+              value: "1000"

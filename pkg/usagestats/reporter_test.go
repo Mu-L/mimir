@@ -26,6 +26,56 @@ import (
 	"github.com/grafana/mimir/pkg/storage/bucket/filesystem"
 )
 
+func TestConfigValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		cfg           *Config
+		expectedError string
+	}{
+		{
+			name: "valid config",
+			cfg: &Config{
+				Enabled:          true,
+				InstallationMode: "custom",
+			},
+			expectedError: "",
+		},
+		{
+			name: "valid config with helm installation mode",
+			cfg: &Config{
+				Enabled:          true,
+				InstallationMode: "helm",
+			},
+			expectedError: "",
+		},
+		{
+			name: "valid config with jsonnet installation mode",
+			cfg: &Config{
+				Enabled:          true,
+				InstallationMode: "jsonnet",
+			},
+			expectedError: "",
+		},
+		{
+			name: "invalid config with unknown installation mode",
+			cfg: &Config{
+				Enabled:          true,
+				InstallationMode: "unknown",
+			},
+			expectedError: "unsupported installation mode: \"unknown\"",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.cfg.Validate()
+			if tc.expectedError != "" {
+				require.ErrorContains(t, err, tc.expectedError)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestGetNextReportAt(t *testing.T) {
 	fixtures := map[string]struct {
 		interval  time.Duration
@@ -325,5 +375,5 @@ func prepareLocalBucketClient(t *testing.T) objstore.InstrumentedBucket {
 	bucketClient, err := filesystem.NewBucketClient(filesystem.Config{Directory: t.TempDir()})
 	require.NoError(t, err)
 
-	return objstore.BucketWithMetrics("", bucketClient, nil)
+	return objstore.WrapWithMetrics(bucketClient, nil, "")
 }

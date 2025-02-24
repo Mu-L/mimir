@@ -6,7 +6,6 @@
 package client
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -16,9 +15,11 @@ import (
 	"time"
 
 	"github.com/grafana/dskit/crypto/tls"
+	"github.com/grafana/dskit/user"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"github.com/weaveworks/common/user"
+
+	"github.com/grafana/mimir/pkg/util/version"
 )
 
 const (
@@ -29,7 +30,13 @@ const (
 var (
 	ErrResourceNotFound = errors.New("requested resource not found")
 	errConflict         = errors.New("conflict with current state of target resource")
+	errTooManyRequests  = errors.New("too many requests")
 )
+
+// UserAgent returns build information in format suitable to be used in HTTP User-Agent header.
+func UserAgent() string {
+	return fmt.Sprintf("mimirtool/%s %s", version.Version, version.Info())
+}
 
 // Config is used to configure a MimirClient.
 type Config struct {
@@ -38,19 +45,22 @@ type Config struct {
 	Address         string `yaml:"address"`
 	ID              string `yaml:"id"`
 	TLS             tls.ClientConfig
-	UseLegacyRoutes bool   `yaml:"use_legacy_routes"`
-	AuthToken       string `yaml:"auth_token"`
+	UseLegacyRoutes bool              `yaml:"use_legacy_routes"`
+	MimirHTTPPrefix string            `yaml:"mimir_http_prefix"`
+	AuthToken       string            `yaml:"auth_token"`
+	ExtraHeaders    map[string]string `yaml:"extra_headers"`
 }
 
 // MimirClient is a client to the Mimir API.
 type MimirClient struct {
-	user      string
-	key       string
-	id        string
-	endpoint  *url.URL
-	Client    http.Client
-	apiPath   string
-	authToken string
+	user         string
+	key          string
+	id           string
+	endpoint     *url.URL
+	Client       http.Client
+	apiPath      string
+	authToken    string
+	extraHeaders map[string]string
 }
 
 // New returns a new MimirClient.
@@ -88,17 +98,21 @@ func New(cfg Config) (*MimirClient, error) {
 
 	path := rulerAPIPath
 	if cfg.UseLegacyRoutes {
-		path = legacyAPIPath
+		var err error
+		if path, err = url.JoinPath(cfg.MimirHTTPPrefix, legacyAPIPath); err != nil {
+			return nil, err
+		}
 	}
 
 	return &MimirClient{
-		user:      cfg.User,
-		key:       cfg.Key,
-		id:        cfg.ID,
-		endpoint:  endpoint,
-		Client:    client,
-		apiPath:   path,
-		authToken: cfg.AuthToken,
+		user:         cfg.User,
+		key:          cfg.Key,
+		id:           cfg.ID,
+		endpoint:     endpoint,
+		Client:       client,
+		apiPath:      path,
+		authToken:    cfg.AuthToken,
+		extraHeaders: cfg.ExtraHeaders,
 	}, nil
 }
 
@@ -106,7 +120,7 @@ func New(cfg Config) (*MimirClient, error) {
 func (r *MimirClient) Query(ctx context.Context, query string) (*http.Response, error) {
 	req := fmt.Sprintf("/prometheus/api/v1/query?query=%s&time=%d", url.QueryEscape(query), time.Now().Unix())
 
-	res, err := r.doRequest(req, "GET", nil, -1)
+	res, err := r.doRequest(ctx, req, "GET", nil, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -114,8 +128,8 @@ func (r *MimirClient) Query(ctx context.Context, query string) (*http.Response, 
 	return res, nil
 }
 
-func (r *MimirClient) doRequest(path, method string, payload io.Reader, contentLength int64) (*http.Response, error) {
-	req, err := buildRequest(path, method, *r.endpoint, payload, contentLength)
+func (r *MimirClient) doRequest(ctx context.Context, path, method string, payload io.Reader, contentLength int64) (*http.Response, error) {
+	req, err := buildRequest(ctx, path, method, *r.endpoint, payload, contentLength)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +152,10 @@ func (r *MimirClient) doRequest(path, method string, payload io.Reader, contentL
 
 	case r.authToken != "":
 		req.Header.Add("Authorization", "Bearer "+r.authToken)
+	}
+
+	for k, v := range r.extraHeaders {
+		req.Header.Add(k, v)
 	}
 
 	req.Header.Add(user.OrgIDHeaderName, r.id)
@@ -174,37 +192,45 @@ func checkResponse(r *http.Response) error {
 		return nil
 	}
 
-	var msg, errMsg string
-	scanner := bufio.NewScanner(io.LimitReader(r.Body, 512))
-	if scanner.Scan() {
-		msg = scanner.Text()
+	bodyHead, err := io.ReadAll(io.LimitReader(r.Body, 1024))
+	if err != nil {
+		return errors.Wrapf(err, "reading body")
 	}
-
-	if msg == "" {
-		errMsg = fmt.Sprintf("server returned HTTP status %s", r.Status)
-	} else {
-		errMsg = fmt.Sprintf("server returned HTTP status %s: %s", r.Status, msg)
-	}
-
+	bodyStr := string(bodyHead)
+	const msg = "response"
 	if r.StatusCode == http.StatusNotFound {
 		log.WithFields(log.Fields{
 			"status": r.Status,
-			"msg":    msg,
-		}).Debugln(errMsg)
+			"body":   bodyStr,
+		}).Debugln(msg)
 		return ErrResourceNotFound
 	}
 	if r.StatusCode == http.StatusConflict {
 		log.WithFields(log.Fields{
 			"status": r.Status,
-			"msg":    msg,
-		}).Debugln(errMsg)
+			"body":   bodyStr,
+		}).Debugln(msg)
 		return errConflict
+	}
+	if r.StatusCode == http.StatusTooManyRequests {
+		log.WithFields(log.Fields{
+			"status": r.Status,
+			"body":   bodyStr,
+		}).Debugln(msg)
+		return errTooManyRequests
 	}
 
 	log.WithFields(log.Fields{
 		"status": r.Status,
-		"msg":    msg,
-	}).Errorln(errMsg)
+		"body":   bodyStr,
+	}).Errorln(msg)
+
+	var errMsg string
+	if bodyStr == "" {
+		errMsg = fmt.Sprintf("server returned HTTP status: %s", r.Status)
+	} else {
+		errMsg = fmt.Sprintf("server returned HTTP status: %s, body: %q", r.Status, bodyStr)
+	}
 
 	return errors.New(errMsg)
 }
@@ -215,7 +241,7 @@ func joinPath(baseURLPath, targetPath string) string {
 	return strings.TrimSuffix(baseURLPath, "/") + targetPath
 }
 
-func buildRequest(p, m string, endpoint url.URL, payload io.Reader, contentLength int64) (*http.Request, error) {
+func buildRequest(ctx context.Context, p, m string, endpoint url.URL, payload io.Reader, contentLength int64) (*http.Request, error) {
 	// parse path parameter again (as it already contains escaped path information
 	pURL, err := url.Parse(p)
 	if err != nil {
@@ -228,12 +254,13 @@ func buildRequest(p, m string, endpoint url.URL, payload io.Reader, contentLengt
 	}
 	endpoint.Path = joinPath(endpoint.Path, pURL.Path)
 	endpoint.RawQuery = pURL.RawQuery
-	r, err := http.NewRequest(m, endpoint.String(), payload)
+	r, err := http.NewRequestWithContext(ctx, m, endpoint.String(), payload)
 	if err != nil {
 		return nil, err
 	}
 	if contentLength >= 0 {
 		r.ContentLength = contentLength
 	}
+	r.Header.Add("User-Agent", UserAgent())
 	return r, nil
 }

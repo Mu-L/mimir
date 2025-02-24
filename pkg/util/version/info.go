@@ -18,10 +18,10 @@ import (
 // Build information. Populated at build-time.
 // Note: Removed BuildUser and BuildDate for reproducible builds
 var (
-	Version   string = "unknown"
-	Revision  string = "unknown"
-	Branch    string = "unknown"
-	GoVersion        = runtime.Version()
+	Version   = "unknown"
+	Revision  = "unknown"
+	Branch    = "unknown"
+	GoVersion = runtime.Version()
 )
 
 // NewCollector returns a collector that exports metrics about current version
@@ -76,4 +76,9 @@ func Print(program string) string {
 // Info returns version, branch and revision information.
 func Info() string {
 	return fmt.Sprintf("(version=%s, branch=%s, revision=%s)", Version, Branch, Revision)
+}
+
+// UserAgent returns build information in format suitable to be used in HTTP User-Agent header.
+func UserAgent() string {
+	return fmt.Sprintf("mimir/%s", Version)
 }
