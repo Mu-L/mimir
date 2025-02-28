@@ -157,7 +157,7 @@ func TestConfigDiffHandler(t *testing.T) {
 				actualCfg = newDefaultDiffConfigMock()
 			}
 
-			req := httptest.NewRequest("GET", "http://test.com/config?mode=diff", nil)
+			req := httptest.NewRequest("GET", "http://localhost/config?mode=diff", nil)
 			w := httptest.NewRecorder()
 
 			h := DefaultConfigHandler(actualCfg, defaultCfg)
@@ -170,20 +170,19 @@ func TestConfigDiffHandler(t *testing.T) {
 			assert.Equal(t, tc.expectedBody, string(body))
 		})
 	}
-
 }
 
 func TestConfigOverrideHandler(t *testing.T) {
 	cfg := &Config{
 		CustomConfigHandler: func(_ interface{}, _ interface{}) http.HandlerFunc {
-			return func(w http.ResponseWriter, r *http.Request) {
+			return func(w http.ResponseWriter, _ *http.Request) {
 				_, err := w.Write([]byte("config"))
 				assert.NoError(t, err)
 			}
 		},
 	}
 
-	req := httptest.NewRequest("GET", "http://test.com/config", nil)
+	req := httptest.NewRequest("GET", "http://localhost/config", nil)
 	w := httptest.NewRecorder()
 
 	h := cfg.configHandler(

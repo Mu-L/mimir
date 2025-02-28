@@ -23,11 +23,17 @@ spec:
         name: tokengen
         target: tokengen
         release: test-enterprise-legacy-label-values
+      annotations:
       namespace: "citestns"
     spec:
       serviceAccountName: test-enterprise-legacy-label-values-enterprise-metrics
       securityContext:
-        null
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         []
       containers:
@@ -44,9 +50,11 @@ spec:
               mountPath: /license
             - name: active-queries
               mountPath: /active-query-tracker
-          env:
-          envFrom:
           securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
             readOnlyRootFilesystem: true
       restartPolicy: OnFailure
       volumes:

@@ -19,6 +19,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	mimir_tsdb "github.com/grafana/mimir/pkg/storage/tsdb"
+	"github.com/grafana/mimir/pkg/storage/tsdb/bucketindex"
 	"github.com/grafana/mimir/pkg/storegateway"
 	"github.com/grafana/mimir/pkg/util"
 )
@@ -35,10 +36,11 @@ const (
 type blocksStoreReplicationSet struct {
 	services.Service
 
-	storesRing        *ring.Ring
-	clientsPool       *client.Pool
-	balancingStrategy loadBalancingStrategy
-	limits            BlocksStoreLimits
+	storesRing         *ring.Ring
+	clientsPool        *client.Pool
+	balancingStrategy  loadBalancingStrategy
+	dynamicReplication storegateway.DynamicReplication
+	limits             BlocksStoreLimits
 
 	// Subservices manager.
 	subservices        *services.Manager
@@ -48,6 +50,7 @@ type blocksStoreReplicationSet struct {
 func newBlocksStoreReplicationSet(
 	storesRing *ring.Ring,
 	balancingStrategy loadBalancingStrategy,
+	dynamicReplication storegateway.DynamicReplication,
 	limits BlocksStoreLimits,
 	clientConfig ClientConfig,
 	logger log.Logger,
@@ -56,6 +59,7 @@ func newBlocksStoreReplicationSet(
 	s := &blocksStoreReplicationSet{
 		storesRing:         storesRing,
 		clientsPool:        newStoreGatewayClientPool(client.NewRingServiceDiscovery(storesRing), clientConfig, logger, reg),
+		dynamicReplication: dynamicReplication,
 		balancingStrategy:  balancingStrategy,
 		limits:             limits,
 		subservicesWatcher: services.NewFailureWatcher(),
@@ -97,47 +101,50 @@ func (s *blocksStoreReplicationSet) stopping(_ error) error {
 	return services.StopManagerAndAwaitStopped(context.Background(), s.subservices)
 }
 
-func (s *blocksStoreReplicationSet) GetClientsFor(userID string, blockIDs []ulid.ULID, exclude map[ulid.ULID][]string) (map[BlocksStoreClient][]ulid.ULID, error) {
-	shards := map[string][]ulid.ULID{}
-
+func (s *blocksStoreReplicationSet) GetClientsFor(userID string, blocks bucketindex.Blocks, exclude map[ulid.ULID][]string) (map[BlocksStoreClient][]ulid.ULID, error) {
+	blocksByAddr := make(map[string][]ulid.ULID)
+	instances := make(map[string]ring.InstanceDesc)
 	userRing := storegateway.GetShuffleShardingSubring(s.storesRing, userID, s.limits)
 
 	// Find the replication set of each block we need to query.
-	for _, blockID := range blockIDs {
-		// Do not reuse the same buffer across multiple Get() calls because we do retain the
-		// returned replication set.
-		bufDescs, bufHosts, bufZones := ring.MakeBuffersForGet()
+	for _, block := range blocks {
+		var ringOpts []ring.Option
+		if eligible, replicationFactor := s.dynamicReplication.EligibleForQuerying(block); eligible {
+			ringOpts = append(ringOpts, ring.WithReplicationFactor(replicationFactor))
+		}
 
-		set, err := userRing.Get(mimir_tsdb.HashBlockID(blockID), storegateway.BlocksRead, bufDescs, bufHosts, bufZones)
+		// Note that we don't pass buffers since we retain instances from the returned replication set.
+		set, err := userRing.GetWithOptions(mimir_tsdb.HashBlockID(block.ID), storegateway.BlocksRead, ringOpts...)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get store-gateway replication set owning the block %s", blockID.String())
+			return nil, errors.Wrapf(err, "failed to get store-gateway replication set owning the block %s", block.ID)
 		}
 
 		// Pick a non excluded store-gateway instance.
-		addr := getNonExcludedInstanceAddr(set, exclude[blockID], s.balancingStrategy)
-		if addr == "" {
-			return nil, fmt.Errorf("no store-gateway instance left after checking exclude for block %s", blockID.String())
+		inst := getNonExcludedInstance(set, exclude[block.ID], s.balancingStrategy)
+		if inst == nil {
+			return nil, fmt.Errorf("no store-gateway instance left after checking exclude for block %s", block.ID)
 		}
 
-		shards[addr] = append(shards[addr], blockID)
+		instances[inst.Addr] = *inst
+		blocksByAddr[inst.Addr] = append(blocksByAddr[inst.Addr], block.ID)
 	}
 
 	clients := map[BlocksStoreClient][]ulid.ULID{}
 
 	// Get the client for each store-gateway.
-	for addr, blockIDs := range shards {
-		c, err := s.clientsPool.GetClientFor(addr)
+	for addr, instance := range instances {
+		c, err := s.clientsPool.GetClientForInstance(instance)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to get store-gateway client for %s", addr)
+			return nil, errors.Wrapf(err, "failed to get store-gateway client for %s %s", instance.Id, addr)
 		}
 
-		clients[c.(BlocksStoreClient)] = blockIDs
+		clients[c.(BlocksStoreClient)] = blocksByAddr[addr]
 	}
 
 	return clients, nil
 }
 
-func getNonExcludedInstanceAddr(set ring.ReplicationSet, exclude []string, balancingStrategy loadBalancingStrategy) string {
+func getNonExcludedInstance(set ring.ReplicationSet, exclude []string, balancingStrategy loadBalancingStrategy) *ring.InstanceDesc {
 	if balancingStrategy == randomLoadBalancing {
 		// Randomize the list of instances to not always query the same one.
 		rand.Shuffle(len(set.Instances), func(i, j int) {
@@ -147,9 +154,9 @@ func getNonExcludedInstanceAddr(set ring.ReplicationSet, exclude []string, balan
 
 	for _, instance := range set.Instances {
 		if !util.StringsContain(exclude, instance.Addr) {
-			return instance.Addr
+			return &instance
 		}
 	}
 
-	return ""
+	return nil
 }

@@ -16,15 +16,16 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/grafana/dskit/flagext"
+	dslog "github.com/grafana/dskit/log"
 	"github.com/grafana/regexp"
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/relabel"
-	"github.com/weaveworks/common/logging"
+	"github.com/thanos-io/objstore/providers/s3"
 
-	"github.com/grafana/mimir/pkg/ingester/activeseries"
+	asmodel "github.com/grafana/mimir/pkg/ingester/activeseries/model"
 	"github.com/grafana/mimir/pkg/storage/tsdb"
-	"github.com/grafana/mimir/pkg/util/fieldcategory"
+	"github.com/grafana/mimir/pkg/util/configdoc"
 	"github.com/grafana/mimir/pkg/util/validation"
 )
 
@@ -154,7 +155,7 @@ func config(block *ConfigBlock, cfg interface{}, flags map[uintptr]*flag.Flag, r
 		fieldValue := v.FieldByIndex(field.Index)
 
 		// Skip fields explicitly marked as "hidden" in the doc
-		if isFieldHidden(field) {
+		if isFieldHidden(field, "") {
 			continue
 		}
 
@@ -279,6 +280,11 @@ func config(block *ConfigBlock, cfg interface{}, flags map[uintptr]*flag.Flag, r
 			return nil, errors.Wrapf(err, "config=%s.%s", t.PkgPath(), t.Name())
 		}
 		if fieldFlag == nil {
+			var def string
+			if kind == KindField {
+				def = getFieldDefault(field, "")
+			}
+
 			block.Add(&ConfigEntry{
 				Kind:          kind,
 				Name:          fieldName,
@@ -287,8 +293,15 @@ func config(block *ConfigBlock, cfg interface{}, flags map[uintptr]*flag.Flag, r
 				FieldType:     fieldType,
 				FieldExample:  getFieldExample(fieldName, field.Type),
 				FieldCategory: getFieldCategory(field, ""),
+				FieldDefault:  def,
 				Element:       element,
 			})
+			continue
+		}
+
+		// The config field has a CLI flag registered. We should check again if the field is hidden,
+		// to ensure any CLI flag override is honored too.
+		if isFieldHidden(field, fieldFlag.Name) {
 			continue
 		}
 
@@ -336,6 +349,12 @@ func getFieldName(field reflect.StructField) string {
 func getFieldCustomType(t reflect.Type) (string, bool) {
 	// Handle custom data types used in the config
 	switch t.String() {
+	case reflect.TypeOf(flagext.LimitsMap[float64]{}).String():
+		return "map of string to float64", true
+	case reflect.TypeOf(flagext.LimitsMap[int]{}).String():
+		return "map of string to int", true
+	case reflect.TypeOf(flagext.LimitsMap[string]{}).String():
+		return "map of string to string", true
 	case reflect.TypeOf(&url.URL{}).String():
 		return "url", true
 	case reflect.TypeOf(time.Duration(0)).String():
@@ -346,7 +365,11 @@ func getFieldCustomType(t reflect.Type) (string, bool) {
 		return "string", true
 	case reflect.TypeOf([]*relabel.Config{}).String():
 		return "relabel_config...", true
-	case reflect.TypeOf(activeseries.CustomTrackersConfig{}).String():
+	case reflect.TypeOf([]*validation.BlockedQuery{}).String():
+		return "blocked_queries_config...", true
+	case reflect.TypeOf([]*validation.BlockedRequest{}).String():
+		return "blocked_requests_config...", true
+	case reflect.TypeOf(asmodel.CustomTrackersConfig{}).String():
 		return "map of tracker name (string) to matcher (string)", true
 	default:
 		return "", false
@@ -416,6 +439,12 @@ func getFieldType(t reflect.Type) (string, error) {
 func getCustomFieldType(t reflect.Type) (string, bool) {
 	// Handle custom data types used in the config
 	switch t.String() {
+	case reflect.TypeOf(flagext.LimitsMap[float64]{}).String():
+		return "map of string to float64", true
+	case reflect.TypeOf(flagext.LimitsMap[int]{}).String():
+		return "map of string to int", true
+	case reflect.TypeOf(flagext.LimitsMap[string]{}).String():
+		return "map of string to string", true
 	case reflect.TypeOf(&url.URL{}).String():
 		return "url", true
 	case reflect.TypeOf(time.Duration(0)).String():
@@ -426,7 +455,11 @@ func getCustomFieldType(t reflect.Type) (string, bool) {
 		return "string", true
 	case reflect.TypeOf([]*relabel.Config{}).String():
 		return "relabel_config...", true
-	case reflect.TypeOf(activeseries.CustomTrackersConfig{}).String():
+	case reflect.TypeOf([]*validation.BlockedQuery{}).String():
+		return "blocked_queries_config...", true
+	case reflect.TypeOf([]*validation.BlockedRequest{}).String():
+		return "blocked_requests_config...", true
+	case reflect.TypeOf(asmodel.CustomTrackersConfig{}).String():
 		return "map of tracker name (string) to matcher (string)", true
 	default:
 		return "", false
@@ -457,12 +490,16 @@ func ReflectType(typ string) reflect.Type {
 		return reflect.TypeOf(map[string]string{})
 	case "relabel_config...":
 		return reflect.TypeOf([]*relabel.Config{})
+	case "blocked_queries_config...":
+		return reflect.TypeOf([]*validation.BlockedQuery{})
+	case "blocked_requests_config...":
+		return reflect.TypeOf([]*validation.BlockedRequest{})
 	case "map of string to float64":
-		return reflect.TypeOf(map[string]float64{})
+		return reflect.TypeOf(flagext.LimitsMap[float64]{})
+	case "map of string to int":
+		return reflect.TypeOf(flagext.LimitsMap[int]{})
 	case "list of durations":
 		return reflect.TypeOf(tsdb.DurationList{})
-	case "map of string to validation.ForwardingRule":
-		return reflect.TypeOf(map[string]validation.ForwardingRule{})
 	default:
 		panic("unknown field type " + typ)
 	}
@@ -494,7 +531,7 @@ func getFieldExample(fieldKey string, fieldType reflect.Type) *FieldExample {
 }
 
 func getCustomFieldEntry(cfg interface{}, field reflect.StructField, fieldValue reflect.Value, flags map[uintptr]*flag.Flag) (*ConfigEntry, error) {
-	if field.Type == reflect.TypeOf(logging.Level{}) || field.Type == reflect.TypeOf(logging.Format{}) {
+	if field.Type == reflect.TypeOf(dslog.Level{}) {
 		fieldFlag, err := getFieldFlag(field, fieldValue, flags)
 		if err != nil || fieldFlag == nil {
 			return nil, err
@@ -579,12 +616,29 @@ func getCustomFieldEntry(cfg interface{}, field reflect.StructField, fieldValue 
 			FieldCategory: getFieldCategory(field, fieldFlag.Name),
 		}, nil
 	}
+	if field.Type == reflect.TypeOf(s3.BucketLookupType(0)) {
+		fieldFlag, err := getFieldFlag(field, fieldValue, flags)
+		if err != nil || fieldFlag == nil {
+			return nil, err
+		}
+
+		return &ConfigEntry{
+			Kind:          KindField,
+			Name:          getFieldName(field),
+			Required:      isFieldRequired(field),
+			FieldFlag:     fieldFlag.Name,
+			FieldDesc:     getFieldDescription(cfg, field, fieldFlag.Usage),
+			FieldType:     "string",
+			FieldDefault:  getFieldDefault(field, fieldFlag.DefValue),
+			FieldCategory: getFieldCategory(field, fieldFlag.Name),
+		}, nil
+	}
 
 	return nil, nil
 }
 
 func getFieldCategory(field reflect.StructField, name string) string {
-	if category, ok := fieldcategory.GetOverride(name); ok {
+	if category, ok := configdoc.GetCategoryOverride(name); ok {
 		return category.String()
 	}
 	return field.Tag.Get("category")
@@ -598,7 +652,10 @@ func getFieldDefault(field reflect.StructField, fallback string) string {
 	return fallback
 }
 
-func isFieldHidden(f reflect.StructField) bool {
+func isFieldHidden(f reflect.StructField, name string) bool {
+	if hidden, ok := configdoc.GetHiddenOverride(name); ok {
+		return hidden
+	}
 	return getDocTagFlag(f, "hidden")
 }
 

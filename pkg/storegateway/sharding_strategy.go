@@ -13,10 +13,9 @@ import (
 	"github.com/grafana/dskit/ring"
 	"github.com/oklog/ulid"
 	"github.com/pkg/errors"
-	"github.com/thanos-io/thanos/pkg/block"
-	"github.com/thanos-io/thanos/pkg/block/metadata"
 
 	mimir_tsdb "github.com/grafana/mimir/pkg/storage/tsdb"
+	"github.com/grafana/mimir/pkg/storage/tsdb/block"
 )
 
 const (
@@ -35,7 +34,7 @@ type ShardingStrategy interface {
 	// FilterBlocks filters metas in-place keeping only blocks that should be loaded by the store-gateway.
 	// The provided loaded map contains blocks which have been previously returned by this function and
 	// are now loaded or loading in the store-gateway.
-	FilterBlocks(ctx context.Context, userID string, metas map[ulid.ULID]*metadata.Meta, loaded map[ulid.ULID]struct{}, synced block.GaugeVec) error
+	FilterBlocks(ctx context.Context, userID string, metas map[ulid.ULID]*block.Meta, loaded map[ulid.ULID]struct{}, synced block.GaugeVec) error
 }
 
 // ShardingLimits is the interface that should be implemented by the limits provider,
@@ -47,21 +46,23 @@ type ShardingLimits interface {
 // ShuffleShardingStrategy is a shuffle sharding strategy, based on the hash ring formed by store-gateways,
 // where each tenant blocks are sharded across a subset of store-gateway instances.
 type ShuffleShardingStrategy struct {
-	r            *ring.Ring
-	instanceID   string
-	instanceAddr string
-	limits       ShardingLimits
-	logger       log.Logger
+	r                  *ring.Ring
+	instanceID         string
+	instanceAddr       string
+	dynamicReplication DynamicReplication
+	limits             ShardingLimits
+	logger             log.Logger
 }
 
 // NewShuffleShardingStrategy makes a new ShuffleShardingStrategy.
-func NewShuffleShardingStrategy(r *ring.Ring, instanceID, instanceAddr string, limits ShardingLimits, logger log.Logger) *ShuffleShardingStrategy {
+func NewShuffleShardingStrategy(r *ring.Ring, instanceID, instanceAddr string, dynamicReplication DynamicReplication, limits ShardingLimits, logger log.Logger) *ShuffleShardingStrategy {
 	return &ShuffleShardingStrategy{
-		r:            r,
-		instanceID:   instanceID,
-		instanceAddr: instanceAddr,
-		limits:       limits,
-		logger:       logger,
+		r:                  r,
+		instanceID:         instanceID,
+		instanceAddr:       instanceAddr,
+		dynamicReplication: dynamicReplication,
+		limits:             limits,
+		logger:             logger,
 	}
 }
 
@@ -91,7 +92,7 @@ func (s *ShuffleShardingStrategy) FilterUsers(_ context.Context, userIDs []strin
 }
 
 // FilterBlocks implements ShardingStrategy.
-func (s *ShuffleShardingStrategy) FilterBlocks(_ context.Context, userID string, metas map[ulid.ULID]*metadata.Meta, loaded map[ulid.ULID]struct{}, synced block.GaugeVec) error {
+func (s *ShuffleShardingStrategy) FilterBlocks(_ context.Context, userID string, metas map[ulid.ULID]*block.Meta, loaded map[ulid.ULID]struct{}, synced block.GaugeVec) error {
 	// As a protection, ensure the store-gateway instance is healthy in the ring. If it's unhealthy because it's failing
 	// to heartbeat or get updates from the ring, or even removed from the ring because of the auto-forget feature, then
 	// keep the previously loaded blocks.
@@ -113,19 +114,24 @@ func (s *ShuffleShardingStrategy) FilterBlocks(_ context.Context, userID string,
 
 	r := GetShuffleShardingSubring(s.r, userID, s.limits)
 	bufDescs, bufHosts, bufZones := ring.MakeBuffersForGet()
+	bufOption := ring.WithBuffers(bufDescs, bufHosts, bufZones)
 
 	for blockID := range metas {
-		key := mimir_tsdb.HashBlockID(blockID)
+		ringOpts := []ring.Option{bufOption}
+		if eligible, replicationFactor := s.dynamicReplication.EligibleForSync(metas[blockID]); eligible {
+			ringOpts = append(ringOpts, ring.WithReplicationFactor(replicationFactor))
+		}
 
 		// Check if the block is owned by the store-gateway
-		set, err := r.Get(key, BlocksOwnerSync, bufDescs, bufHosts, bufZones)
+		key := mimir_tsdb.HashBlockID(blockID)
+		set, err := r.GetWithOptions(key, BlocksOwnerSync, ringOpts...)
 
 		// If an error occurs while checking the ring, we keep the previously loaded blocks.
 		if err != nil {
 			if _, ok := loaded[blockID]; ok {
-				level.Warn(s.logger).Log("msg", "failed to check block owner but block is kept because was previously loaded", "block", blockID.String(), "err", err)
+				level.Warn(s.logger).Log("msg", "failed to check block owner but block is kept because was previously loaded", "block", blockID, "err", err)
 			} else {
-				level.Warn(s.logger).Log("msg", "failed to check block owner and block has been excluded because was not previously loaded", "block", blockID.String(), "err", err)
+				level.Warn(s.logger).Log("msg", "failed to check block owner and block has been excluded because was not previously loaded", "block", blockID, "err", err)
 
 				// Skip the block.
 				synced.WithLabelValues(shardExcludedMeta).Inc()
@@ -144,8 +150,8 @@ func (s *ShuffleShardingStrategy) FilterBlocks(_ context.Context, userID string,
 		// we can safely unload it only once at least 1 authoritative owner is available
 		// for queries.
 		if _, ok := loaded[blockID]; ok {
-			// The ring Get() returns an error if there's no available instance.
-			if _, err := r.Get(key, BlocksOwnerRead, bufDescs, bufHosts, bufZones); err != nil {
+			// The ring GetWithOptions() method returns an error if there's no available instance.
+			if _, err := r.GetWithOptions(key, BlocksOwnerRead, ringOpts...); err != nil {
 				// Keep the block.
 				continue
 			}
@@ -193,7 +199,7 @@ func NewShardingMetadataFilterAdapter(userID string, strategy ShardingStrategy) 
 
 // Filter implements block.MetadataFilter.
 // This function is NOT safe for use by multiple goroutines concurrently.
-func (a *shardingMetadataFilterAdapter) Filter(ctx context.Context, metas map[ulid.ULID]*metadata.Meta, synced block.GaugeVec, modified block.GaugeVec) error {
+func (a *shardingMetadataFilterAdapter) Filter(ctx context.Context, metas map[ulid.ULID]*block.Meta, synced block.GaugeVec) error {
 	if err := a.strategy.FilterBlocks(ctx, a.userID, metas, a.lastBlocks, synced); err != nil {
 		return err
 	}
