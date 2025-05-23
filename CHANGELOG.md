@@ -45,10 +45,9 @@
 * [ENHANCEMENT] OTLP: Add support for converting OTel explicit bucket histograms to Prometheus native histograms with custom buckets using the `distributor.otel-convert-histograms-to-nhcb` flag. #11077
 * [ENHANCEMENT] Add configurable per-tenant `limited_queries`, which you can only run at or less than an allowed frequency. #11097
 * [ENHANCEMENT] Ingest-Storage: Add `ingest-storage.kafka.producer-record-version` to allow control Kafka record versioning. #11244
-* [ENHANCEMENT] Ruler: Update `<prometheus-http-prefix>/api/v1/rules` and `<prometheus-http-prefix>/api/v1/alerts` to reply with HTTP error 422 if rule evaluation is completely disabled for the tenant. If only recording rule- or alerting rule evaluation is disabled for the tenant, the response now includes a corresponding warning. #11321 #11495
+* [ENHANCEMENT] Ruler: Update `<prometheus-http-prefix>/api/v1/rules` and `<prometheus-http-prefix>/api/v1/alerts` to reply with HTTP error 422 if rule evaluation is completely disabled for the tenant. If only recording rule or alerting rule evaluation is disabled for the tenant, the response now includes a corresponding warning. #11321 #11495 #11511
 * [ENHANCEMENT] Add tenant configuration block `ruler_alertmanager_client_config` which allows the Ruler's Alertmanager client options to be specified on a per-tenant basis. #10816
 * [ENHANCEMENT] Store-gateway: Retry querying blocks from store-gateways with dynamic replication until trying all possible store-gateways. #11354 #11398
-* [ENHANCEMENT] Query-frontend: Avoid some re-parsing of PromQL, to improve efficiency. #11437
 * [ENHANCEMENT] Distributor: Gracefully handle type assertion of WatchPrefix in HA Tracker to continue checking for updates. #11411 #11461
 * [ENHANCEMENT] Querier: Include chunks streamed from store-gateway in Mimir Query Engine memory estimate of query memory usage. #11453 #11465
 * [ENHANCEMENT] Querier: Include chunks streamed from ingester in Mimir Query Engine memory estimate of query memory usage. #11457
@@ -67,6 +66,7 @@
 * [BUGFIX] Query-frontend: Fix a panic in monolithic mode caused by a clash in labels of the `cortex_client_invalid_cluster_validation_label_requests_total` metric definition. #11455
 * [BUGFIX] Compactor: Fix issue where `MimirBucketIndexNotUpdated` can fire even though the index has been updated within the alert threshold. #11303
 * [BUGFIX] Distributor: fix old entries in the HA Tracker with zero valued "elected at" timestamp. #11462
+* [BUGFIX] Query-scheduler: Fix issue where deregistered querier goroutines can cause a panic if their backlogged dequeue requests are serviced. #11510
 
 ### Mixin
 
@@ -76,7 +76,9 @@
 * [ENHANCEMENT] Alerts: Improve `MimirIngesterFailsToProcessRecordsFromKafka` to not fire during forced TSDB head compaction. #11006
 * [ENHANCEMENT] Alerts: Add alerts for invalid cluster validation labels. #11255 #11282 #11413
 * [CHANGE] Alerts: Update query for `MimirBucketIndexNotUpdated`. Use `max_over_time` to prevent alert firing when pods rotate. #11311, #11426
+* [CHANGE] Alerts: Make alerting threshold for `DistributorGcUsesTooMuchCpu` configurable. #11508.
 * [BUGFIX] Dashboards: fix "Mimir / Tenants" legends for non-Kubernetes deployments. #10891
+* [BUGFIX] Dashboards: fix Query-scheduler RPS panel legend in "Mimir / Reads". #11515
 * [BUGFIX] Recording rules: fix `cluster_namespace_deployment:actual_replicas:count` recording rule when there's a mix on single-zone and multi-zone deployments. #11287
 * [BUGFIX] Alerts: Enhance the `MimirRolloutStuck` alert, so it checks whether rollout groups as a whole (and not spread across instances) are changing or stuck. #11288
 
