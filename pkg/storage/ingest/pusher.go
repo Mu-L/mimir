@@ -104,7 +104,7 @@ func (c pusherConsumer) Consume(ctx context.Context, records []record) (returnEr
 			}
 
 			// We don't free the WriteRequest slices because they are being freed by a level below.
-			err := parsed.Unmarshal(r.content)
+			err := DeserializeRecordContent(r.content, parsed.PreallocWriteRequest, r.version)
 			if err != nil {
 				parsed.err = fmt.Errorf("parsing ingest consumer write request: %w", err)
 			}
@@ -177,7 +177,7 @@ func (c pusherConsumer) newStorageWriter(bytesPerTenant map[string]int) PusherCl
 }
 
 func (c pusherConsumer) pushToStorage(ctx context.Context, tenantID string, req *mimirpb.WriteRequest, writer PusherCloser) error {
-	spanLog, ctx := spanlogger.NewWithLogger(ctx, c.logger, "pusherConsumer.pushToStorage")
+	spanLog, ctx := spanlogger.New(ctx, c.logger, tracer, "pusherConsumer.pushToStorage")
 	defer spanLog.Finish()
 
 	// Note that the implementation of the Pusher expects the tenantID to be in the context.

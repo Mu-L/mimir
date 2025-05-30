@@ -261,6 +261,10 @@
     // Resource consumption threshold to accomodate node loss
     // used for baremetal deployment only
     resource_threshold: 0.66,
+
+    // Threshold for DistributorGcUsesTooMuchCpu
+    distributor_gc_cpu_threshold: 10,
+
     alertmanager_alerts: {
       kubernetes: {
         memory_allocation: |||
@@ -705,6 +709,10 @@
       compactor: {
         enabled: false,
         hpa_name: $._config.autoscaling_hpa_prefix + 'compactor',
+      },
+      block_builder: {
+        enabled: false,
+        hpa_name: $._config.autoscaling_hpa_prefix + 'block-builder',
       },
     },
 

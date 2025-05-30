@@ -18,7 +18,6 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/gorilla/mux"
-	"github.com/grafana/dskit/grpcutil"
 	"github.com/grafana/dskit/tenant"
 	"github.com/pkg/errors"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -38,18 +37,6 @@ var (
 	// errTenantRuleEvaluationDisabled is returned when all rule evaluation types are disabled for the tenant.
 	errTenantRuleEvaluationDisabled = errors.New("all rule evaluation is disabled for user")
 )
-
-func isErrTenantRuleEvaluationDisabled(err error) bool {
-	if errors.Is(err, errTenantRuleEvaluationDisabled) {
-		return true
-	}
-	if s, ok := grpcutil.ErrorToStatus(err); ok {
-		if s.Message() == errTenantRuleEvaluationDisabled.Error() {
-			return true
-		}
-	}
-	return false
-}
 
 // In order to reimplement the prometheus rules API, a large amount of code was copied over
 // This is required because the prometheus api implementation does not allow us to return errors
@@ -178,7 +165,7 @@ func NewAPI(r *Ruler, s rulestore.RuleStore, logger log.Logger) *API {
 }
 
 func (a *API) PrometheusRules(w http.ResponseWriter, req *http.Request) {
-	logger, ctx := spanlogger.NewWithLogger(req.Context(), a.logger, "API.PrometheusRules")
+	logger, ctx := spanlogger.New(req.Context(), a.logger, tracer, "API.PrometheusRules")
 	defer logger.Finish()
 
 	userID, err := tenant.TenantID(ctx)
@@ -243,7 +230,7 @@ func (a *API) PrometheusRules(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	rulesResp, token, err := a.ruler.GetRules(ctx, rulesReq)
 	if err != nil {
-		if isErrTenantRuleEvaluationDisabled(err) {
+		if errors.Is(err, errTenantRuleEvaluationDisabled) {
 			respondUnprocessableRequest(logger, w, fmt.Sprintf("rule evaluation is disabled for tenant %s", userID))
 			return
 		}
@@ -337,7 +324,7 @@ func parseExcludeAlerts(req *http.Request) (bool, error) {
 }
 
 func (a *API) PrometheusAlerts(w http.ResponseWriter, req *http.Request) {
-	logger, ctx := spanlogger.NewWithLogger(req.Context(), a.logger, "API.PrometheusAlerts")
+	logger, ctx := spanlogger.New(req.Context(), a.logger, tracer, "API.PrometheusAlerts")
 	defer logger.Finish()
 
 	userID, err := tenant.TenantID(ctx)
@@ -350,7 +337,7 @@ func (a *API) PrometheusAlerts(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	rulesResp, _, err := a.ruler.GetRules(ctx, RulesRequest{Filter: AlertingRule})
 	if err != nil {
-		if isErrTenantRuleEvaluationDisabled(err) {
+		if errors.Is(err, errTenantRuleEvaluationDisabled) {
 			respondUnprocessableRequest(logger, w, fmt.Sprintf("rule evaluation is disabled for tenant %s", userID))
 			return
 		}
@@ -509,7 +496,7 @@ func (a *API) parseRequest(req *http.Request, requireNamespace, requireGroup boo
 }
 
 func (a *API) ListRules(w http.ResponseWriter, req *http.Request) {
-	logger, ctx := spanlogger.NewWithLogger(req.Context(), a.logger, "API.ListRules")
+	logger, ctx := spanlogger.New(req.Context(), a.logger, tracer, "API.ListRules")
 	defer logger.Finish()
 
 	userID, namespace, _, err := a.parseRequest(req, false, false)
@@ -599,7 +586,7 @@ func (a *API) ListRules(w http.ResponseWriter, req *http.Request) {
 }
 
 func (a *API) GetRuleGroup(w http.ResponseWriter, req *http.Request) {
-	logger, ctx := spanlogger.NewWithLogger(req.Context(), a.logger, "API.GetRuleGroup")
+	logger, ctx := spanlogger.New(req.Context(), a.logger, tracer, "API.GetRuleGroup")
 	defer logger.Finish()
 
 	userID, namespace, groupName, err := a.parseRequest(req, true, true)
@@ -632,7 +619,7 @@ func (a *API) GetRuleGroup(w http.ResponseWriter, req *http.Request) {
 }
 
 func (a *API) CreateRuleGroup(w http.ResponseWriter, req *http.Request) {
-	logger, ctx := spanlogger.NewWithLogger(req.Context(), a.logger, "API.CreateRuleGroup")
+	logger, ctx := spanlogger.New(req.Context(), a.logger, tracer, "API.CreateRuleGroup")
 	defer logger.Finish()
 
 	userID, namespace, _, err := a.parseRequest(req, true, false)
@@ -732,7 +719,7 @@ func (a *API) CreateRuleGroup(w http.ResponseWriter, req *http.Request) {
 }
 
 func (a *API) DeleteNamespace(w http.ResponseWriter, req *http.Request) {
-	logger, ctx := spanlogger.NewWithLogger(req.Context(), a.logger, "API.DeleteNamespace")
+	logger, ctx := spanlogger.New(req.Context(), a.logger, tracer, "API.DeleteNamespace")
 	defer logger.Finish()
 
 	userID, namespace, _, err := a.parseRequest(req, true, false)
@@ -769,7 +756,7 @@ func (a *API) DeleteNamespace(w http.ResponseWriter, req *http.Request) {
 }
 
 func (a *API) DeleteRuleGroup(w http.ResponseWriter, req *http.Request) {
-	logger, ctx := spanlogger.NewWithLogger(req.Context(), a.logger, "API.DeleteRuleGroup")
+	logger, ctx := spanlogger.New(req.Context(), a.logger, tracer, "API.DeleteRuleGroup")
 	defer logger.Finish()
 
 	userID, namespace, groupName, err := a.parseRequest(req, true, true)
