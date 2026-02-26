@@ -136,7 +136,7 @@ func NewQueryPlannerWithTime(opts EngineOpts, versionProvider QueryPlanVersionPr
 	}
 
 	if opts.EnableCommonSubexpressionElimination {
-		planner.RegisterQueryPlanOptimizationPass(commonsubexpressionelimination.NewOptimizationPass(opts.CommonOpts.Reg, opts.Logger))
+		planner.RegisterQueryPlanOptimizationPass(commonsubexpressionelimination.NewOptimizationPass(opts.EnableSubsetSelectorElimination, opts.CommonOpts.Reg, opts.Logger))
 	}
 
 	if opts.EnableMultiAggregation {
